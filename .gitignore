@@ -1,0 +1,48 @@
+# WordPress
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+debug.log
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+__MACOSX/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.bak
+*.cache
+*.old
+
+# Node modules (if any)
+node_modules/
+npm-debug.log
+package-lock.json
+
+# Composer (if any)
+vendor/
+composer.lock
+
+# Build files (if any)
+dist/
+build/
+
+# Setup/Developer documentation (not for public repo)
+GITHUB_SETUP.md
+GIT_SETUP_WITH_EXISTING_REPO.md
+QUICK_START.md
+
+# ignore all files starting with . or ~ (except .gitignore)
+.*
+!/.gitignore
+~*
+
