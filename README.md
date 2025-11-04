@@ -11,7 +11,9 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 - ✅ Multi-language support (automatic detection via WPML/Polylang or manual configuration)
 - ✅ Rich text editor for maintenance messages with HTML support
 - ✅ Optional countdown timer showing time until maintenance ends
-- ✅ Custom maintenance image upload
+- ✅ Custom maintenance image upload with toggle option
+- ✅ Remove image functionality with AJAX (no page reload)
+- ✅ Self-contained template (no external CDN dependencies)
 - ✅ Language-specific messages for each configured language
 - ✅ Automatic language detection based on current site language
 - ✅ Tabbed admin interface for easy management
@@ -40,7 +42,8 @@ When you first activate the plugin, you'll see a language configuration modal:
 - **Start Date/Time**: When maintenance should begin
 - **End Date/Time**: When maintenance should end
 - **Time Zone**: Select your timezone (important for accurate scheduling)
-- **Maintenance Image**: Upload a custom image for the maintenance page
+- **Show Maintenance Image**: Toggle to show/hide the maintenance image
+- **Maintenance Image**: Upload a custom image for the maintenance page (with remove button)
 - **Show Countdown**: Enable/disable the countdown timer
 
 ### Language-Specific Messages
@@ -62,11 +65,12 @@ Click the "Reconfigure Languages" button to reset language configuration and cho
 3. Enable maintenance mode
 4. Set your start and end dates/times
 5. Select your timezone
-6. (Optional) Upload a maintenance image
-7. (Optional) Enable countdown timer
-8. Configure messages in the **Default Language** tab
-9. Configure language-specific messages in other language tabs
-10. Click **Save Settings**
+6. (Optional) Toggle maintenance image display on/off
+7. (Optional) Upload a custom maintenance image (or use default 404.svg)
+8. (Optional) Enable countdown timer
+9. Configure messages in the **Default Language** tab
+10. Configure language-specific messages in other language tabs
+11. Click **Save Settings**
 
 ### How It Works
 
@@ -124,6 +128,12 @@ For issues, feature requests, or questions, please contact the plugin author.
 ## Changelog
 
 ### 2.3
+- **Refactored template system**: Separated HTML/CSS into `template.php` file
+- **Self-contained design**: No external CDN dependencies (all CSS/JS embedded)
+- **Image management**: Added toggle option to show/hide maintenance image
+- **AJAX image removal**: Remove images without page reload
+- **Local default image**: Changed to local `404.svg` file (no external dependencies)
+- **Improved responsive design**: Custom CSS with better mobile support
 - Added plugin-specific cache clearing (doesn't affect site-wide cache)
 - Improved error handling for maintenance page
 - Added activation/deactivation hooks
@@ -152,5 +162,20 @@ Developed by Tulips
 
 ## License
 
-This plugin is proprietary software. All rights reserved.
+This plugin is licensed under GPLv2 or later.
+
+## Technical Details
+
+### Template System
+The plugin uses a separate `template.php` file for the maintenance page HTML. This provides:
+- Clean separation of concerns
+- Easier customization
+- Self-contained CSS (no external dependencies)
+- Better maintainability
+
+### Image Management
+- Default image: `404.svg` (local file in plugin directory)
+- Toggle option: Enable/disable image display
+- AJAX removal: Remove uploaded images without page reload
+- Responsive: Images scale properly on all devices
 

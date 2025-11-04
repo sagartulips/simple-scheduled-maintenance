@@ -41,6 +41,10 @@ GITHUB_SETUP.md
 GIT_SETUP_WITH_EXISTING_REPO.md
 QUICK_START.md
 
+# Local sync scripts (not for public repo)
+sync-to-wp.ps1
+sync-to-wp.bat
+
 # ignore all files starting with . or ~ (except .gitignore)
 .*
 !/.gitignore

@@ -4,6 +4,24 @@ function ssm_admin_menu() {
 }
 add_action('admin_menu', 'ssm_admin_menu');
 
+// AJAX handler for removing image
+add_action('wp_ajax_ssm_remove_image', 'ssm_ajax_remove_image');
+function ssm_ajax_remove_image() {
+    check_ajax_referer('ssm_save_action', 'nonce');
+    
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Unauthorized']);
+        return;
+    }
+    
+    update_option('ssm_image', '');
+    if (function_exists('ssm_clear_cache')) {
+        ssm_clear_cache();
+    }
+    
+    wp_send_json_success(['message' => 'Image removed successfully']);
+}
+
 /**
  * Get available languages (from plugin or manual config)
  */
@@ -49,6 +67,23 @@ function ssm_settings_page() {
         }
     }
     
+    // Handle image removal (fallback for non-AJAX - redirect method)
+    if (isset($_POST['ssm_remove_image']) && !isset($_POST['ssm_save'])) {
+        check_admin_referer('ssm_save_action', 'ssm_save_nonce');
+        update_option('ssm_image', '');
+        if (function_exists('ssm_clear_cache')) {
+            ssm_clear_cache();
+        }
+        // Redirect to avoid form resubmission and show updated state
+        wp_safe_redirect(add_query_arg(['page' => 'ssm-settings', 'image_removed' => '1'], admin_url('options-general.php')));
+        exit;
+    }
+    
+    // Show success message if image was removed via redirect
+    if (isset($_GET['image_removed']) && $_GET['image_removed'] == '1') {
+        echo "<div class='updated'><p><strong>Image removed successfully.</strong></p></div>";
+    }
+    
     // Handle data removal request (separate, more protected)
     if (isset($_POST['ssm_remove_data']) && isset($_POST['ssm_confirm_remove'])) {
         check_admin_referer('ssm_remove_data_action', 'ssm_remove_data_nonce');
@@ -61,6 +96,7 @@ function ssm_settings_page() {
         delete_option('ssm_heading');
         delete_option('ssm_description');
         delete_option('ssm_image');
+        delete_option('ssm_show_image');
         delete_option('ssm_show_countdown');
         delete_option('ssm_configured_languages');
         delete_option('ssm_default_language');
@@ -182,13 +218,17 @@ function ssm_settings_page() {
                 update_option("ssm_countdown_text_{$lang_code}", sanitize_text_field($lang_countdown));
             }
         }
-
+        
+        // Handle image upload
         if (!empty($_FILES['ssm_image']['tmp_name'])) {
             $upload = wp_handle_upload($_FILES['ssm_image'], ['test_form' => false]);
             if (!isset($upload['error'])) {
                 update_option('ssm_image', esc_url_raw($upload['url']));
             }
         }
+        
+        // Handle show image option
+        update_option('ssm_show_image', isset($_POST['ssm_show_image']) ? 1 : 0);
 
         echo "<div class='updated'><p><strong>Settings saved.</strong></p></div>";
     }
@@ -204,7 +244,11 @@ function ssm_settings_page() {
     $start           = get_option('ssm_start_time');
     $end             = get_option('ssm_end_time');
     $timezone        = get_option('ssm_timezone') ?: get_option('timezone_string') ?: 'Europe/Stockholm';
-    $image           = get_option('ssm_image', 'https://www.svgrepo.com/show/426192/cogs-settings.svg');
+    $image           = get_option('ssm_image', '');
+    if (empty($image)) {
+        $image = (defined('SSM_PLUGIN_URL') ? SSM_PLUGIN_URL : plugin_dir_url(__FILE__)) . '404.svg'; // Fallback to default local image
+    }
+    $show_image      = get_option('ssm_show_image', 1);
     $show_countdown  = get_option('ssm_show_countdown', 1);
     $languages       = ssm_get_available_languages();
     $default_lang    = get_option('ssm_default_language', 'en');
@@ -456,13 +500,37 @@ function ssm_settings_page() {
                     </tr>
                     <?php endif; ?>
                     <tr>
+                        <th><label for="ssm_show_image">Show Maintenance Image</label></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" id="ssm_show_image" name="ssm_show_image" value="1" <?php checked($show_image, 1); ?>>
+                                Enable maintenance image display
+                            </label>
+                            <p class="description">Check to show the maintenance image on the maintenance page.</p>
+                        </td>
+                    </tr>
+                    <tr>
                         <th><label for="ssm_image">Maintenance Image</label></th>
                         <td>
                             <input type="file" id="ssm_image" name="ssm_image" accept="image/*">
-                            <?php if ($image) : ?>
-                                <p><img src="<?php echo esc_url($image); ?>" style="max-width: 200px; margin-top: 10px;" alt="Current image"></p>
+                            <?php 
+                            $default_image = defined('SSM_PLUGIN_URL') ? SSM_PLUGIN_URL . '404.svg' : plugin_dir_url(__FILE__) . '404.svg';
+                            $has_custom_image = !empty($image) && $image !== $default_image && $image !== '';
+                            ?>
+                            <?php if ($has_custom_image) : ?>
+                                <p id="ssm-image-container">
+                                    <img src="<?php echo esc_url($image); ?>" style="max-width: 200px; margin-top: 10px; display: block;" alt="Current image" id="ssm-current-image">
+                                    <button type="button" id="ssm-remove-image-btn" class="button button-secondary" style="margin-top: 10px;">
+                                        Remove Image
+                                    </button>
+                                </p>
+                            <?php elseif (empty($image) || $image === $default_image) : ?>
+                                <p>
+                                    <img src="<?php echo esc_url($default_image); ?>" style="max-width: 200px; margin-top: 10px; display: block; opacity: 0.6;" alt="Default image">
+                                    <span class="description" style="display: block; margin-top: 5px;">Default image (upload a new image to replace)</span>
+                                </p>
                             <?php endif; ?>
-                            <p class="description">This image will be used for all languages.</p>
+                            <p class="description">Upload a custom maintenance image. This image will be used for all languages. Recommended size: 180x180px or larger.</p>
                         </td>
                     </tr>
                     <tr>
@@ -753,6 +821,46 @@ jQuery(document).ready(function($) {
         // Show/hide content
         $('.ssm-tab-content').hide();
         $('#tab-' + tab).show();
+    });
+    
+    // Remove image button handler (AJAX)
+    $('#ssm-remove-image-btn').on('click', function() {
+        if (!confirm('Are you sure you want to remove this image?')) {
+            return;
+        }
+        
+        var $btn = $(this);
+        var $container = $('#ssm-image-container');
+        var originalText = $btn.text();
+        
+        $btn.prop('disabled', true).text('Removing...');
+        
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'ssm_remove_image',
+                nonce: '<?php echo wp_create_nonce('ssm_save_action'); ?>'
+            },
+            success: function(response) {
+                if (response.success) {
+                    $container.html('<span class="description" style="display: block; margin-top: 10px;">Image removed. Default image will be used.</span>');
+                    // Show success message
+                    $('.wrap h1').after('<div class="notice notice-success is-dismissible"><p><strong>' + response.data.message + '</strong></p></div>');
+                    // Auto-dismiss after 3 seconds
+                    setTimeout(function() {
+                        $('.notice.is-dismissible').fadeOut();
+                    }, 3000);
+                } else {
+                    alert('Error: ' + (response.data.message || 'Failed to remove image'));
+                    $btn.prop('disabled', false).text(originalText);
+                }
+            },
+            error: function() {
+                alert('Error: Failed to remove image');
+                $btn.prop('disabled', false).text(originalText);
+            }
+        });
     });
     
     // Reconfigure button handler

@@ -5,8 +5,8 @@ Requires at least: 5.0
 Tested up to: 6.4
 Requires PHP: 7.0
 Stable tag: 2.3
-License: Proprietary
-License URI: https://example.com/license
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 A powerful WordPress plugin for scheduled maintenance mode with multi-language support, countdown timer, and flexible configuration.
 
@@ -19,7 +19,9 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 * Multi-language support (automatic detection via WPML/Polylang or manual configuration)
 * Rich text editor for maintenance messages with HTML support
 * Optional countdown timer showing time until maintenance ends
-* Custom maintenance image upload
+* Custom maintenance image upload with toggle option
+* Remove image functionality with AJAX (no page reload)
+* Self-contained template (no external dependencies)
 * Language-specific messages for each configured language
 * Automatic language detection based on current site language
 * Tabbed admin interface for easy management
@@ -45,7 +47,8 @@ When you first activate the plugin, you'll see a language configuration modal:
 * Start Date/Time: When maintenance should begin
 * End Date/Time: When maintenance should end
 * Time Zone: Select your timezone (important for accurate scheduling)
-* Maintenance Image: Upload a custom image for the maintenance page
+* Show Maintenance Image: Toggle to show/hide the maintenance image
+* Maintenance Image: Upload a custom image for the maintenance page (with remove button)
 * Show Countdown: Enable/disable the countdown timer
 
 **Language-Specific Messages:**
@@ -61,11 +64,12 @@ When you first activate the plugin, you'll see a language configuration modal:
 3. Enable maintenance mode
 4. Set your start and end dates/times
 5. Select your timezone
-6. (Optional) Upload a maintenance image
-7. (Optional) Enable countdown timer
-8. Configure messages in the Default Language tab
-9. Configure language-specific messages in other language tabs
-10. Click Save Settings
+6. (Optional) Toggle maintenance image display on/off
+7. (Optional) Upload a custom maintenance image (or use default 404.svg)
+8. (Optional) Enable countdown timer
+9. Configure messages in the Default Language tab
+10. Configure language-specific messages in other language tabs
+11. Click Save Settings
 
 **How It Works:**
 The plugin automatically shows the maintenance page when:
@@ -120,6 +124,11 @@ No. The plugin only clears its own configuration cache to ensure settings update
 == Changelog ==
 
 = 2.3 =
+* Refactored to use separate template.php file (self-contained, no CDN dependencies)
+* Added image toggle option (show/hide maintenance image)
+* Added AJAX image removal functionality (no page reload)
+* Changed default image to local 404.svg file
+* Improved responsive design with custom CSS
 * Added plugin-specific cache clearing (doesn't affect site-wide cache)
 * Improved error handling for maintenance page
 * Added activation/deactivation hooks
