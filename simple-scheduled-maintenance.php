@@ -3,7 +3,7 @@
  * Plugin Name: Simple Scheduled Maintenance
  * Plugin URI: https://github.com/sagartulips/simple-scheduled-maintenance
  * Description: A powerful WordPress plugin for scheduled maintenance mode with multi-language support, countdown timer, and flexible configuration. Automatically detects WPML/Polylang or allows manual language setup.
- * Version: 2.3
+ * Version: 2.4
  * Author: Tulips
  * Author URI: https://github.com/sagartulips
  * Developer: Sagar GC
@@ -18,7 +18,7 @@
  * Network: false
  * 
  * @package SimpleScheduledMaintenance
- * @version 2.3
+ * @version 2.4
  * @author Sagar GC
  * @company Tulips
  * @email sagar@tulipstechnlogies.com
@@ -41,7 +41,7 @@ defined('ABSPATH') || exit;
 
 define('SSM_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('SSM_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('SSM_VERSION', '2.3');
+define('SSM_VERSION', '2.4');
 
 // Register activation hook
 register_activation_hook(__FILE__, 'ssm_plugin_activation');
@@ -83,12 +83,48 @@ function ssm_plugin_deactivation() {
 
 /**
  * Plugin uninstall hook
+ * This runs when the plugin is deleted from WordPress
+ * Deletes all plugin data from the database
  */
 function ssm_plugin_uninstall() {
-    // Check if user wants to remove data (this would be handled via AJAX before uninstall)
-    // For now, we'll keep the data unless explicitly deleted
-    // The uninstall process in WordPress doesn't allow user interaction,
-    // so we'll add a settings page option to allow data removal
+    // Get image URL before deleting options (to delete the file)
+    $image_url = get_option('ssm_image', '');
+    
+    // Delete ALL plugin options from database using comprehensive SQL query
+    // This catches ALL plugin-related options including:
+    // - All main options (ssm_enabled, ssm_start_time, etc.)
+    // - Language-specific options (ssm_heading_*, ssm_description_*, ssm_countdown_text_*)
+    // - Any cached or dynamically created options
+    global $wpdb;
+    
+    // Delete all options starting with 'ssm_' (catches everything)
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+        $wpdb->esc_like('ssm_') . '%'
+    ));
+    
+    // Delete all transients related to the plugin
+    // Transients are stored with prefix '_transient_' and '_transient_timeout_'
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+        $wpdb->esc_like('_transient_ssm_') . '%'
+    ));
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+        $wpdb->esc_like('_transient_timeout_ssm_') . '%'
+    ));
+    
+    // Delete uploaded image file if it exists
+    if (!empty($image_url) && strpos($image_url, content_url()) !== false) {
+        // Convert URL to file path
+        $image_path = str_replace(content_url(), WP_CONTENT_DIR, $image_url);
+        if (file_exists($image_path)) {
+            @unlink($image_path);
+        }
+    }
+    
+    // Clear all WordPress object cache entries related to plugin
+    wp_cache_flush();
 }
 
 /**
@@ -254,6 +290,8 @@ function ssm_is_multilingual_active() {
  * Get configured languages (manual configuration when no multilingual plugin)
  */
 function ssm_get_configured_languages() {
+    // Clear cache to ensure we get fresh data
+    wp_cache_delete('ssm_configured_languages', 'options');
     $configured = get_option('ssm_configured_languages', []);
     
     // If no manual configuration, return default English
@@ -343,6 +381,15 @@ function ssm_get_all_languages() {
 }
 
 include_once SSM_PLUGIN_PATH . 'admin-settings.php';
+
+// Add Settings link to plugin list
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), 'ssm_add_plugin_action_links');
+function ssm_add_plugin_action_links($links) {
+    // Add Settings link (appears for both active and inactive plugins)
+    $settings_link = '<a href="' . esc_url(admin_url('options-general.php?page=ssm-settings')) . '">' . esc_html__('Settings', 'simple-scheduled-maintenance') . '</a>';
+    array_unshift($links, $settings_link);
+    return $links;
+}
 
 /**
  * Get language-specific maintenance message

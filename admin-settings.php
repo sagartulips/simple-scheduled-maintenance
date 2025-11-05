@@ -26,7 +26,14 @@ function ssm_ajax_remove_image() {
  * Get available languages (from plugin or manual config)
  */
 function ssm_get_available_languages() {
-    // If multilingual plugin is active, use it
+    // Check if language mode is set to manual - if so, only use configured languages
+    $language_mode = get_option('ssm_language_mode', '');
+    if ($language_mode === 'manual') {
+        // Manual mode: only use configured languages
+        return ssm_get_configured_languages();
+    }
+    
+    // If multilingual plugin is active and mode is automatic or not set, use it
     if (function_exists('ssm_is_multilingual_active') && ssm_is_multilingual_active()) {
         if (function_exists('icl_get_languages')) {
             $wpml_langs = icl_get_languages('skip_missing=0');
@@ -81,7 +88,9 @@ function ssm_settings_page() {
     
     // Show success message if image was removed via redirect
     if (isset($_GET['image_removed']) && $_GET['image_removed'] == '1') {
-        echo "<div class='updated'><p><strong>Image removed successfully.</strong></p></div>";
+        $current_time = current_time('mysql');
+        $formatted_time = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($current_time));
+        echo "<div class='updated notice is-dismissible' id='ssm-image-removed'><p><strong>Image removed successfully.</strong> <span style='color: #666; font-size: 0.9em;'>(Removed at: " . esc_html($formatted_time) . ")</span></p></div>";
     }
     
     // Handle data removal request (separate, more protected)
@@ -122,7 +131,8 @@ function ssm_settings_page() {
     if (isset($_GET['reconfigure'])) {
         delete_option('ssm_languages_configured');
         delete_option('ssm_language_mode');
-        echo "<div class='updated'><p><strong>Language configuration reset. Please configure languages again.</strong></p></div>";
+        // Don't delete configured_languages yet - keep them for manual mode
+        // Only reset if user explicitly chooses to reconfigure
     }
     
     // Check if plugin was just activated
@@ -132,6 +142,46 @@ function ssm_settings_page() {
     }
     
     $languages_configured = get_option('ssm_languages_configured', false);
+    $language_mode = get_option('ssm_language_mode', '');
+    $configured_langs = get_option('ssm_configured_languages', []);
+    
+    // For non-multilingual sites, automatically set up English and skip configuration
+    // BUT only if:
+    // 1. Not in reconfigure mode (reconfigure shouldn't show for single-language sites anyway)
+    // 2. Not in language_mode_set mode (user clicked Continue and wants manual config)
+    // 3. Languages are not configured yet (auto-configure on first load)
+    if (!$is_multilingual && !isset($_GET['reconfigure']) && !isset($_GET['language_mode_set'])) {
+        // Auto-configure if languages are not configured or empty
+        if (!$languages_configured || empty($configured_langs) || empty($language_mode)) {
+            update_option('ssm_configured_languages', ['en' => 'English']);
+            update_option('ssm_default_language', 'en');
+            update_option('ssm_language_mode', 'manual');
+            update_option('ssm_languages_configured', true);
+            // Reload variables after setting options
+            $languages_configured = true;
+            $language_mode = 'manual';
+            $configured_langs = ['en' => 'English'];
+        }
+    }
+    
+    // Also handle reconfigure URL for single-language sites - just ensure config is set
+    if (!$is_multilingual && isset($_GET['reconfigure'])) {
+        // Ensure English is configured even if reconfigure is clicked
+        if (!$languages_configured || empty($configured_langs) || empty($language_mode)) {
+            update_option('ssm_configured_languages', ['en' => 'English']);
+            update_option('ssm_default_language', 'en');
+            update_option('ssm_language_mode', 'manual');
+            update_option('ssm_languages_configured', true);
+            // Reload variables after setting options
+            $languages_configured = true;
+            $language_mode = 'manual';
+            $configured_langs = ['en' => 'English'];
+        }
+        // Remove reconfigure parameter from URL for single-language sites
+        // (they don't need language reconfiguration)
+        wp_safe_redirect(add_query_arg(['page' => 'ssm-settings'], admin_url('options-general.php')));
+        exit;
+    }
     
     // Handle language configuration mode
     if (isset($_POST['ssm_set_language_mode'])) {
@@ -143,28 +193,154 @@ function ssm_settings_page() {
         if ($mode === 'automatic') {
             // Auto-detect from WPML/Polylang
             update_option('ssm_languages_configured', true);
+            // Set transient for success message
+            set_transient('ssm_language_mode_set_success', 'automatic', 30);
+            // Redirect to clean URL
+            wp_safe_redirect(add_query_arg(['page' => 'ssm-settings'], admin_url('options-general.php')));
+            exit;
         } elseif ($mode === 'manual') {
             // Will be configured in next step
             update_option('ssm_languages_configured', false);
+            
+            // Clear old automatically detected languages when switching to manual
+            // Get old configured languages before clearing
+            $old_languages = get_option('ssm_configured_languages', []);
+            
+            // For multi-language sites, get all languages from automatic detection
+            $is_multilingual = function_exists('ssm_is_multilingual_active') && ssm_is_multilingual_active();
+            if ($is_multilingual) {
+                // Get all automatically detected languages
+                $auto_languages = [];
+                if (function_exists('icl_get_languages')) {
+                    $wpml_langs = icl_get_languages('skip_missing=0');
+                    foreach ($wpml_langs as $lang) {
+                        $auto_languages[$lang['code']] = $lang['native_name'];
+                    }
+                } elseif (function_exists('pll_languages_list')) {
+                    $pll_langs = pll_languages_list(['fields' => []]);
+                    foreach ($pll_langs as $lang) {
+                        $auto_languages[$lang->slug] = $lang->name;
+                    }
+                }
+                
+                // Clear language-specific options for all automatically detected languages
+                foreach ($auto_languages as $old_code => $old_name) {
+                    delete_option("ssm_heading_{$old_code}");
+                    delete_option("ssm_description_{$old_code}");
+                    delete_option("ssm_countdown_text_{$old_code}");
+                }
+            } else {
+                // For single-language sites, clear old configured languages
+                foreach ($old_languages as $old_code => $old_name) {
+                    delete_option("ssm_heading_{$old_code}");
+                    delete_option("ssm_description_{$old_code}");
+                    delete_option("ssm_countdown_text_{$old_code}");
+                }
+            }
+            
+            // Clear the configured languages array - will be set fresh when user configures manually
+            delete_option('ssm_configured_languages');
+            
+            // Clear cache to ensure fresh data
+            wp_cache_flush();
+            
+            // Ensure at least English is configured for manual mode
+            $existing_langs = get_option('ssm_configured_languages', []);
+            if (empty($existing_langs)) {
+                update_option('ssm_configured_languages', ['en' => 'English']);
+                update_option('ssm_default_language', 'en');
+            }
+            
+            // IMPORTANT: Clear any output buffers before redirect
+            while (ob_get_level()) {
+                ob_end_clean();
+            }
+            
+            // Redirect to close modal and show manual config form
+            // Build clean URL from scratch with only the parameters we want
+            $redirect_url = admin_url('options-general.php?page=ssm-settings&language_mode_set=1');
+            
+            wp_safe_redirect($redirect_url);
+            exit;
         }
-        
-        echo "<div class='updated'><p><strong>Language mode set.</strong></p></div>";
     }
     
-    // Handle manual language configuration
-    if (isset($_POST['ssm_configure_languages']) && !$is_multilingual) {
+    // Show success message if language mode was just set (check transient first for automatic mode)
+    $auto_mode_success = get_transient('ssm_language_mode_set_success');
+    if ($auto_mode_success === 'automatic') {
+        delete_transient('ssm_language_mode_set_success');
+        $current_time = current_time('mysql');
+        $formatted_time = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($current_time));
+        echo "<div class='updated notice is-dismissible' id='ssm-mode-saved'><p><strong>Language mode set. Languages configured automatically.</strong> <span style='color: #666; font-size: 0.9em;'>(Saved at: " . esc_html($formatted_time) . ")</span></p></div>";
+    } elseif (isset($_GET['language_mode_set']) && $_GET['language_mode_set'] == '1') {
+        $current_mode = get_option('ssm_language_mode', '');
+        if ($current_mode === 'manual') {
+            $current_time = current_time('mysql');
+            $formatted_time = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($current_time));
+            echo "<div class='updated notice is-dismissible' id='ssm-mode-saved'><p><strong>Language mode set. Please configure languages below.</strong> <span style='color: #666; font-size: 0.9em;'>(Saved at: " . esc_html($formatted_time) . ")</span></p></div>";
+        }
+    }
+    
+    // Handle manual language configuration (works for both multilingual and non-multilingual)
+    if (isset($_POST['ssm_configure_languages'])) {
         check_admin_referer('ssm_configure_languages_action', 'ssm_configure_languages_nonce');
         
         $languages = [];
-        $default_lang = sanitize_text_field($_POST['ssm_default_language']);
+        $default_lang = isset($_POST['ssm_default_language']) ? sanitize_text_field($_POST['ssm_default_language']) : 'en';
         
+        // Process languages array - handle WordPress form structure
+        // WordPress processes ssm_languages[][code] and ssm_languages[][name] as separate indexed arrays
+        // Result: [0]=>{code:en}, [1]=>{name:English}, [2]=>{code:sv}, [3]=>{name:Swedish}
         if (isset($_POST['ssm_languages']) && is_array($_POST['ssm_languages'])) {
-            foreach ($_POST['ssm_languages'] as $lang_data) {
-                if (!empty($lang_data['code']) && !empty($lang_data['name'])) {
-                    $code = sanitize_key($lang_data['code']);
-                    $name = sanitize_text_field($lang_data['name']);
-                    $languages[$code] = $name;
+            $current_code = '';
+            $current_name = '';
+            
+            foreach ($_POST['ssm_languages'] as $index => $lang_data) {
+                if (is_array($lang_data)) {
+                    // Check if this array has a 'code' key
+                    if (isset($lang_data['code']) && !empty($lang_data['code'])) {
+                        // If we have a previous code/name pair, save it first
+                        if (!empty($current_code) && !empty($current_name)) {
+                            // Trim and clean code (remove all spaces)
+                            $code = trim($current_code);
+                            $code = str_replace(' ', '', $code);
+                            $code = sanitize_key($code);
+                            $name = trim($current_name);
+                            $name = sanitize_text_field($name);
+                            $languages[$code] = $name;
+                        }
+                        // Start new pair with code - trim whitespace
+                        $current_code = trim($lang_data['code']);
+                        // Remove any spaces from code (language codes should be continuous)
+                        $current_code = str_replace(' ', '', $current_code);
+                        $current_name = ''; // Reset name
+                    }
+                    // Check if this array has a 'name' key
+                    elseif (isset($lang_data['name']) && !empty($lang_data['name'])) {
+                        $current_name = trim($lang_data['name']);
+                        
+                        // If we have both code and name now, save the pair
+                        if (!empty($current_code) && !empty($current_name)) {
+                            // Trim and clean code (remove all spaces)
+                            $code = trim($current_code);
+                            $code = str_replace(' ', '', $code);
+                            $code = sanitize_key($code);
+                            $name = trim($current_name);
+                            $name = sanitize_text_field($name);
+                            $languages[$code] = $name;
+                            // Reset for next pair
+                            $current_code = '';
+                            $current_name = '';
+                        }
+                    }
                 }
+            }
+            
+            // Save any remaining pair at the end
+            if (!empty($current_code) && !empty($current_name)) {
+                $code = sanitize_key($current_code);
+                $name = sanitize_text_field($current_name);
+                $languages[$code] = $name;
             }
         }
         
@@ -174,11 +350,132 @@ function ssm_settings_page() {
             $default_lang = 'en';
         }
         
-        update_option('ssm_configured_languages', $languages);
+        // Ensure default language is in the languages array
+        if (!isset($languages[$default_lang]) && !empty($languages)) {
+            // If default language is not in list, use first language as default
+            $default_lang = array_key_first($languages);
+        }
+        
+        // Get old languages before updating
+        $old_languages = get_option('ssm_configured_languages', []);
+        
+        // Update configured languages
+        $saved_langs = update_option('ssm_configured_languages', $languages);
         update_option('ssm_default_language', $default_lang);
         update_option('ssm_languages_configured', true);
         
-        echo "<div class='updated'><p><strong>Languages configured.</strong></p></div>";
+        // Clear language-specific options for languages that are no longer in the list
+        foreach ($old_languages as $old_code => $old_name) {
+            if (!isset($languages[$old_code])) {
+                // This language was removed, delete its options
+                delete_option("ssm_heading_{$old_code}");
+                delete_option("ssm_description_{$old_code}");
+                delete_option("ssm_countdown_text_{$old_code}");
+            }
+        }
+        
+        // Clear cache aggressively to ensure fresh data
+        if (function_exists('ssm_clear_cache')) {
+            ssm_clear_cache();
+        }
+        // Clear specific option caches
+        wp_cache_delete('ssm_configured_languages', 'options');
+        wp_cache_delete('ssm_default_language', 'options');
+        wp_cache_delete('ssm_languages_configured', 'options');
+        wp_cache_delete('ssm_language_mode', 'options');
+        wp_cache_flush();
+        
+        // IMPORTANT: Clear output buffers before redirect
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        
+        // Redirect to avoid showing empty page
+        wp_safe_redirect(add_query_arg(['page' => 'ssm-settings', 'languages_configured' => '1'], admin_url('options-general.php')));
+        exit;
+    }
+    
+    // Show success message if languages were just configured
+    if (isset($_GET['languages_configured']) && $_GET['languages_configured'] == '1') {
+        $current_time = current_time('mysql');
+        $formatted_time = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($current_time));
+        echo "<div class='updated notice is-dismissible' id='ssm-languages-saved'><p><strong>Languages configured successfully.</strong> <span style='color: #666; font-size: 0.9em;'>(Saved at: " . esc_html($formatted_time) . ")</span></p></div>";
+    }
+    
+    // Handle plugin reset
+    if (isset($_POST['ssm_reset']) && isset($_POST['ssm_reset_confirm']) && $_POST['ssm_reset_confirm'] === 'yes') {
+        check_admin_referer('ssm_reset_action', 'ssm_reset_nonce');
+        
+        // Get image URL before deleting options (to delete the file)
+        $image_url = get_option('ssm_image', '');
+        
+        // Delete ALL plugin options from database using comprehensive SQL query
+        // This is more reliable than individual delete_option() calls
+        // and catches ALL plugin-related options including:
+        // - All main options (ssm_enabled, ssm_start_time, etc.)
+        // - Language-specific options (ssm_heading_*, ssm_description_*, ssm_countdown_text_*)
+        // - Any cached or dynamically created options
+        global $wpdb;
+        
+        // Delete all options starting with 'ssm_' (catches everything)
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+            $wpdb->esc_like('ssm_') . '%'
+        ));
+        
+        // Delete all transients related to the plugin
+        // Transients are stored with prefix '_transient_' and '_transient_timeout_'
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+            $wpdb->esc_like('_transient_ssm_') . '%'
+        ));
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+            $wpdb->esc_like('_transient_timeout_ssm_') . '%'
+        ));
+        
+        // Delete uploaded image file if it exists
+        if (!empty($image_url) && strpos($image_url, content_url()) !== false) {
+            // Convert URL to file path
+            $image_path = str_replace(content_url(), WP_CONTENT_DIR, $image_url);
+            if (file_exists($image_path)) {
+                @unlink($image_path);
+            }
+        }
+        
+        // Clear all WordPress object cache entries related to plugin
+        // Clear specific option caches
+        wp_cache_delete('ssm_enabled', 'options');
+        wp_cache_delete('ssm_start_time', 'options');
+        wp_cache_delete('ssm_end_time', 'options');
+        wp_cache_delete('ssm_timezone', 'options');
+        wp_cache_delete('ssm_heading', 'options');
+        wp_cache_delete('ssm_description', 'options');
+        wp_cache_delete('ssm_image', 'options');
+        wp_cache_delete('ssm_show_image', 'options');
+        wp_cache_delete('ssm_show_countdown', 'options');
+        wp_cache_delete('ssm_countdown_text', 'options');
+        wp_cache_delete('ssm_configured_languages', 'options');
+        wp_cache_delete('ssm_default_language', 'options');
+        wp_cache_delete('ssm_language_mode', 'options');
+        wp_cache_delete('ssm_languages_configured', 'options');
+        wp_cache_delete('ssm_plugin_just_activated', 'options');
+        wp_cache_delete('ssm_plugin_version', 'options');
+        wp_cache_delete('ssm_plugin_deactivated', 'options');
+        
+        // Flush all cache to ensure everything is cleared
+        wp_cache_flush();
+        
+        // Redirect with success message
+        wp_safe_redirect(add_query_arg(['page' => 'ssm-settings', 'reset_success' => '1'], admin_url('options-general.php')));
+        exit;
+    }
+    
+    // Show success message if plugin was reset
+    if (isset($_GET['reset_success']) && $_GET['reset_success'] == '1') {
+        $current_time = current_time('mysql');
+        $formatted_time = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($current_time));
+        echo "<div class='updated notice is-dismissible' id='ssm-reset-success'><p><strong>Plugin data has been reset successfully. All settings and configurations have been removed.</strong> <span style='color: #666; font-size: 0.9em;'>(Reset at: " . esc_html($formatted_time) . ")</span></p></div>";
     }
     
     // Handle main settings save
@@ -230,7 +527,10 @@ function ssm_settings_page() {
         // Handle show image option
         update_option('ssm_show_image', isset($_POST['ssm_show_image']) ? 1 : 0);
 
-        echo "<div class='updated'><p><strong>Settings saved.</strong></p></div>";
+        // Show success message with timestamp
+        $current_time = current_time('mysql');
+        $formatted_time = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($current_time));
+        echo "<div class='updated notice is-dismissible' id='ssm-settings-saved'><p><strong>Settings saved successfully.</strong> <span style='color: #666; font-size: 0.9em;'>(Saved at: " . esc_html($formatted_time) . ")</span></p></div>";
     }
 
     $enabled         = get_option('ssm_enabled');
@@ -250,13 +550,85 @@ function ssm_settings_page() {
     }
     $show_image      = get_option('ssm_show_image', 1);
     $show_countdown  = get_option('ssm_show_countdown', 1);
+    
+    // If languages were just configured, reload everything fresh FIRST
+    if (isset($_GET['languages_configured']) && $_GET['languages_configured'] == '1') {
+        // Force clear all caches
+        wp_cache_delete('ssm_configured_languages', 'options');
+        wp_cache_delete('ssm_language_mode', 'options');
+        wp_cache_delete('ssm_languages_configured', 'options');
+        wp_cache_delete('ssm_default_language', 'options');
+        wp_cache_flush();
+    }
+    
+    // Reload language_mode first to ensure correct language source
+    $language_mode   = get_option('ssm_language_mode', '');
+    // Reload languages_configured to ensure we have the latest after auto-config
+    $languages_configured = get_option('ssm_languages_configured', false);
+    
+    // Get languages - use updated values after auto-configuration
+    // IMPORTANT: Clear cache before getting languages to ensure fresh data
+    if (!isset($_GET['languages_configured'])) {
+        wp_cache_delete('ssm_configured_languages', 'options');
+    }
     $languages       = ssm_get_available_languages();
     $default_lang    = get_option('ssm_default_language', 'en');
+    // Reload configured_langs to ensure we have the latest after auto-config
     $configured_langs = ssm_get_configured_languages();
-    $language_mode   = get_option('ssm_language_mode', $is_multilingual ? 'automatic' : 'manual');
+    
+    
+    // If on reconfigure, ensure we have at least English for manual mode
+    if (isset($_GET['reconfigure']) && empty($configured_langs)) {
+        $configured_langs = ['en' => 'English'];
+        update_option('ssm_configured_languages', $configured_langs);
+        update_option('ssm_default_language', 'en');
+    }
+    
+    // After Continue is clicked with manual mode, update variables for display
+    if (isset($_GET['language_mode_set'])) {
+        // Ensure language_mode is set to manual (from the form submission)
+        $language_mode = get_option('ssm_language_mode', '');
+        if ($language_mode === 'manual') {
+            $languages_configured = false; // Force showing config form
+            // Reset configured languages to ensure clean state for manual config
+            $configured_langs = get_option('ssm_configured_languages', []);
+            if (empty($configured_langs)) {
+                $configured_langs = ['en' => 'English'];
+                update_option('ssm_configured_languages', $configured_langs);
+            }
+            // Update languages array to reflect the reset
+            $languages = $configured_langs;
+            // Ensure default lang is set
+            if (!isset($configured_langs[$default_lang]) && !empty($configured_langs)) {
+                $default_lang = array_key_first($configured_langs);
+                update_option('ssm_default_language', $default_lang);
+            }
+        }
+    }
     
     // Check if languages need to be configured
+    // For single-language sites, allow manual config even if languages_configured is true
+    // This allows users to add more languages manually
     $needs_config = !$languages_configured && (!$is_multilingual || $language_mode === 'manual');
+    
+    // If on reconfigure page and manual mode selected, ensure config form shows
+    // OR if language_mode_set is in URL (user clicked Continue in modal), show form
+    if (isset($_GET['language_mode_set']) && $language_mode === 'manual') {
+        $needs_config = true;
+        $languages_configured = false; // Force showing config form
+    }
+    
+    // Determine if manual config form should show (defined early for use in show_main_tabs)
+    // Show if: 
+    // 1. needs config and manual mode, OR 
+    // 2. language_mode_set is in URL and mode is manual (user wants to configure manually)
+    // NOTE: For single-language sites, we don't show manual config - they just use English
+    $show_manual_config = false;
+    if ($is_multilingual) {
+        // Only show manual config for multilingual sites
+        $show_manual_config = ($needs_config && $language_mode === 'manual') || 
+                             (isset($_GET['language_mode_set']) && $language_mode === 'manual');
+    }
 
     $timezones = timezone_identifiers_list();
 
@@ -288,45 +660,59 @@ function ssm_settings_page() {
     
     // Get default language name
     $default_lang_name = isset($languages[$default_lang]) ? $languages[$default_lang] : 'English';
+    
+    // Only show modal if:
+    // 1. On reconfigure AND language_mode_set is NOT in URL (means Continue not clicked yet)
+    // 2. OR multilingual site that needs initial configuration
+    // NOTE: For single-language sites, we don't show modal - just auto-configure English
+    $show_modal = false;
+    if (isset($_GET['reconfigure']) && !isset($_GET['language_mode_set'])) {
+        // Only show modal on reconfigure for MULTILINGUAL sites
+        // Single-language sites don't need language configuration
+        if ($is_multilingual) {
+            $show_modal = true;
+        }
+    } elseif ($is_multilingual && !$languages_configured && empty($language_mode) && !isset($_GET['language_mode_set']) && !isset($_GET['reconfigure'])) {
+        // Show modal for multilingual sites that need initial configuration
+        $show_modal = true;
+    }
 ?>
 <div class="wrap">
     <h1>Simple Scheduled Maintenance</h1>
     
-    <?php if ($needs_config || $just_activated) : ?>
+    <?php if ($show_modal) : ?>
         <!-- Language Configuration Modal -->
         <div id="ssm-language-modal" style="display: block; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100000;">
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-height: 90vh; overflow-y: auto;">
                 <h2 style="margin-top: 0;"><?php echo $just_activated ? 'Welcome! Language Configuration' : 'Reconfigure Languages'; ?></h2>
                 <p>Choose how to configure languages for your maintenance messages:</p>
                 
-                <form method="post" id="ssm-language-mode-form">
+                <form method="post" id="ssm-language-mode-form" action="">
                     <?php wp_nonce_field('ssm_language_mode_action', 'ssm_language_mode_nonce'); ?>
                     
                     <table class="form-table">
+                        <?php if ($is_multilingual) : ?>
                         <tr>
                             <th>
                                 <label>
-                                    <input type="radio" name="ssm_language_mode" value="automatic" <?php checked($is_multilingual); ?> <?php echo !$is_multilingual ? 'disabled' : ''; ?>>
+                                    <input type="radio" name="ssm_language_mode" value="automatic" <?php checked($language_mode === 'automatic' || (empty($language_mode) && $is_multilingual)); ?>>
                                     <strong>Automatic Detection</strong>
                                 </label>
                             </th>
                             <td>
-                                <?php if ($is_multilingual) : ?>
-                                    <p>Languages will be automatically detected from your multilingual plugin (<?php echo function_exists('icl_get_languages') ? 'WPML' : 'Polylang'; ?>).</p>
-                                <?php else : ?>
-                                    <p style="color: #999;">No multilingual plugin detected. Please use manual configuration.</p>
-                                <?php endif; ?>
+                                <p>Languages will be automatically detected from your multilingual plugin (<?php echo function_exists('icl_get_languages') ? 'WPML' : 'Polylang'; ?>).</p>
                             </td>
                         </tr>
+                        <?php endif; ?>
                         <tr>
                             <th>
                                 <label>
-                                    <input type="radio" name="ssm_language_mode" value="manual" <?php checked(!$is_multilingual || $language_mode === 'manual'); ?>>
+                                    <input type="radio" name="ssm_language_mode" value="manual" <?php checked(!$is_multilingual || $language_mode === 'manual' || (empty($language_mode) && !$is_multilingual)); ?>>
                                     <strong>Manual Configuration</strong>
                                 </label>
                             </th>
                             <td>
-                                <p>Manually configure languages with codes and names.</p>
+                                <p><?php echo $is_multilingual ? 'Manually configure languages with codes and names.' : 'Configure languages manually (default: English).'; ?></p>
                             </td>
                         </tr>
                     </table>
@@ -337,64 +723,81 @@ function ssm_settings_page() {
                 </form>
             </div>
         </div>
-        
-        <?php if ($language_mode === 'manual') : ?>
-            <!-- Manual Language Configuration -->
-            <div class="card" style="max-width: 800px; margin-bottom: 20px;">
-                <h2>Configure Languages</h2>
-                <p>Add languages with their codes (e.g., 'en', 'sv', 'no', 'de', 'fi') and names (e.g., 'English', 'Swedish').</p>
-                
-                <form method="post" id="language-config-form">
-                    <?php wp_nonce_field('ssm_configure_languages_action', 'ssm_configure_languages_nonce'); ?>
-                    
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="ssm_default_language">Default Language</label></th>
-                            <td>
-                                <select id="ssm_default_language" name="ssm_default_language">
-                                    <?php foreach ($configured_langs as $code => $name) : ?>
-                                        <option value="<?php echo esc_attr($code); ?>" <?php selected($default_lang, $code); ?>>
-                                            <?php echo esc_html($name); ?> (<?php echo esc_html($code); ?>)
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <p class="description">This language will be used as fallback if current language is not detected.</p>
-                            </td>
-                        </tr>
-                    </table>
-                    
-                    <h3>Languages</h3>
-                    <div id="languages-container">
-                        <?php foreach ($configured_langs as $code => $name) : ?>
-                            <div class="language-row" style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
-                                <input type="text" 
-                                       name="ssm_languages[][code]" 
-                                       value="<?php echo esc_attr($code); ?>" 
-                                       placeholder="Code (e.g., en, sv)" 
-                                       style="width: 120px;"
-                                       required>
-                                <input type="text" 
-                                       name="ssm_languages[][name]" 
-                                       value="<?php echo esc_attr($name); ?>" 
-                                       placeholder="Language Name (e.g., English)" 
-                                       style="flex: 1;"
-                                       required>
-                                <button type="button" class="button remove-language" style="color: #dc3232;">Remove</button>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                    
-                    <button type="button" id="add-language" class="button" style="margin-top: 10px;">+ Add Language</button>
-                    
-                    <p class="submit">
-                        <input type="submit" name="ssm_configure_languages" class="button button-primary" value="Save Language Configuration">
-                    </p>
-                </form>
-            </div>
-        <?php endif; ?>
     <?php endif; ?>
     
-    <?php if (!$needs_config) : ?>
+    <?php 
+    // Show manual config form (already defined above)
+    if ($show_manual_config) : 
+    ?>
+        <!-- Manual Language Configuration (shown after Continue is clicked) -->
+        <div class="card" style="max-width: 800px; margin-bottom: 20px;">
+            <h2>Configure Languages</h2>
+            <p>Add languages with their codes (e.g., 'en', 'sv', 'no', 'de', 'fi') and names (e.g., 'English', 'Swedish').</p>
+            
+            <form method="post" id="language-config-form">
+                <?php wp_nonce_field('ssm_configure_languages_action', 'ssm_configure_languages_nonce'); ?>
+                
+                <table class="form-table">
+                    <tr>
+                        <th><label for="ssm_default_language">Default Language</label></th>
+                        <td>
+                            <select id="ssm_default_language" name="ssm_default_language">
+                                <?php 
+                                // Ensure at least English is available
+                                $langs_to_show = !empty($configured_langs) ? $configured_langs : ['en' => 'English'];
+                                foreach ($langs_to_show as $code => $name) : ?>
+                                    <option value="<?php echo esc_attr($code); ?>" <?php selected($default_lang, $code); ?>>
+                                        <?php echo esc_html($name); ?> (<?php echo esc_html($code); ?>)
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">This language will be used as fallback if current language is not detected.</p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <h3>Languages</h3>
+                <div id="languages-container">
+                    <?php 
+                    // Ensure at least one language (English) is shown
+                    $langs_to_display = !empty($configured_langs) ? $configured_langs : ['en' => 'English'];
+                    foreach ($langs_to_display as $code => $name) : ?>
+                        <div class="language-row" style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
+                            <input type="text" 
+                                   name="ssm_languages[][code]" 
+                                   value="<?php echo esc_attr($code); ?>" 
+                                   placeholder="Code (e.g., en, sv)" 
+                                   style="width: 120px;"
+                                   required>
+                            <input type="text" 
+                                   name="ssm_languages[][name]" 
+                                   value="<?php echo esc_attr($name); ?>" 
+                                   placeholder="Language Name (e.g., English)" 
+                                   style="flex: 1;"
+                                   required>
+                            <button type="button" class="button remove-language" style="color: #dc3232;">Remove</button>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                
+                <button type="button" id="add-language" class="button" style="margin-top: 10px;">+ Add Language</button>
+                
+                <p class="submit">
+                    <input type="submit" name="ssm_configure_languages" class="button button-primary" value="Save Language Configuration">
+                </p>
+            </form>
+        </div>
+    <?php endif; ?>
+    
+    <?php 
+    // Only show main tabs if:
+    // 1. Languages are configured AND
+    // 2. Not in reconfigure mode AND
+    // 3. Not in language_mode_set mode AND
+    // 4. Not showing manual config form
+    $show_main_tabs = $languages_configured && !isset($_GET['reconfigure']) && !isset($_GET['language_mode_set']) && !$show_manual_config;
+    if ($show_main_tabs) : 
+    ?>
         <!-- Tab Navigation -->
         <nav class="nav-tab-wrapper" style="margin: 20px 0;">
             <a href="#general" class="nav-tab nav-tab-active" data-tab="general">General Settings</a>
@@ -658,9 +1061,24 @@ function ssm_settings_page() {
             
             <p class="submit" style="margin-top: 20px;">
                 <?php submit_button('Save Settings', 'primary', 'ssm_save', false); ?>
-                <button type="button" id="ssm-reconfigure-btn" class="button">Reconfigure Languages</button>
+                <?php // Only show Reconfigure Languages button for multilingual sites ?>
+                <?php if ($is_multilingual): ?>
+                    <button type="button" id="ssm-reconfigure-btn" class="button">Reconfigure Languages</button>
+                <?php endif; ?>
             </p>
     </form>
+
+        <!-- Reconfigure Languages Confirmation Modal -->
+        <div id="ssm-reconfigure-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100000;">
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                <h2 style="margin-top: 0; color: #dc3232;">Reconfigure Languages</h2>
+                <p style="font-size: 16px; line-height: 1.6; margin-bottom: 25px;">This will reset your language configuration. All language settings will be cleared and you'll need to reconfigure them. Continue?</p>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" id="ssm-reconfigure-cancel" class="button">Cancel</button>
+                    <button type="button" id="ssm-reconfigure-ok" class="button button-primary" style="background: #dc3232; border-color: #dc3232;">OK</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Clear Cache Section -->
         <div class="card" style="margin-top: 30px; border-left: 4px solid #2271b1;">
@@ -676,23 +1094,52 @@ function ssm_settings_page() {
         
         <!-- Data Removal Section (Hidden by default, can be shown via toggle) -->
         <div class="card" style="margin-top: 30px; border-left: 4px solid #dc3232; display: none;" id="data-removal-section">
-            <h2 style="color: #dc3232;">⚠️ Remove All Plugin Data (Danger Zone)</h2>
-            <p><strong>Warning:</strong> This will permanently delete all maintenance settings, language configurations, and messages. This action cannot be undone.</p>
-            <form method="post" onsubmit="return confirm('Are you absolutely sure you want to delete ALL plugin data? This cannot be undone!');">
-                <?php wp_nonce_field('ssm_remove_data_action', 'ssm_remove_data_nonce'); ?>
+            <h2 style="color: #dc3232;">⚠️ Reset Plugin Data (Danger Zone)</h2>
+            <p><strong>Warning:</strong> This will permanently delete all maintenance settings, language configurations, uploaded images, and messages from the database. This action cannot be undone.</p>
+            <p><strong>What will be deleted:</strong></p>
+            <ul style="margin-left: 20px;">
+                <li>All maintenance mode settings (enabled/disabled, start/end times, timezone)</li>
+                <li>All language configurations (automatic/manual mode, configured languages)</li>
+                <li>All maintenance messages (headings, descriptions, countdown text) for all languages</li>
+                <li>Uploaded maintenance image file</li>
+                <li>All plugin-specific options and transients</li>
+            </ul>
+            <form method="post" id="ssm-reset-form">
+                <?php wp_nonce_field('ssm_reset_action', 'ssm_reset_nonce'); ?>
                 <label>
-                    <input type="checkbox" name="ssm_confirm_remove" value="1" required>
+                    <input type="checkbox" name="ssm_reset_confirm" value="yes" required>
                     I understand this will delete all plugin data permanently
                 </label>
                 <p class="submit">
-                    <input type="submit" name="ssm_remove_data" class="button button-secondary" value="Remove All Data" style="background: #dc3232; color: white; border-color: #dc3232;">
+                    <button type="button" id="ssm-reset-btn" class="button button-secondary" style="background: #dc3232; color: white; border-color: #dc3232;">Reset All Plugin Data</button>
                 </p>
             </form>
         </div>
         
-        <!-- Toggle for Data Removal Section -->
+        <!-- Reset Plugin Data Confirmation Modal -->
+        <div id="ssm-reset-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100000;">
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                <h2 style="margin-top: 0; color: #dc3232;">⚠️ Reset All Plugin Data</h2>
+                <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;"><strong>Are you absolutely sure you want to reset ALL plugin data?</strong></p>
+                <p style="font-size: 14px; line-height: 1.6; color: #666; margin-bottom: 25px;">This action will permanently delete:</p>
+                <ul style="margin-left: 20px; margin-bottom: 25px; color: #666;">
+                    <li>All maintenance mode settings</li>
+                    <li>All language configurations</li>
+                    <li>All maintenance messages for all languages</li>
+                    <li>Uploaded maintenance image file</li>
+                    <li>All plugin-specific options and transients</li>
+                </ul>
+                <p style="font-size: 14px; line-height: 1.6; color: #dc3232; font-weight: bold; margin-bottom: 25px;">⚠️ This action cannot be undone!</p>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" id="ssm-reset-cancel" class="button">Cancel</button>
+                    <button type="button" id="ssm-reset-confirm" class="button button-primary" style="background: #dc3232; border-color: #dc3232;">Yes, Delete All Data</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Toggle for Reset Section -->
         <div style="margin-top: 20px;">
-            <button type="button" id="show-data-removal" class="button" style="color: #dc3232;">Show Data Removal Options</button>
+            <button type="button" id="show-data-removal" class="button" style="color: #dc3232;">Show Reset Options</button>
         </div>
         
         <!-- Debug Info Tab -->
@@ -804,6 +1251,21 @@ function ssm_settings_page() {
         </tr>
     </table>
         </div>
+    <?php elseif (!$show_modal && !$show_manual_config && !$show_main_tabs): ?>
+        <!-- Fallback message if nothing else shows (shouldn't happen, but prevents blank page) -->
+        <!-- Only show for multilingual sites that need configuration -->
+        <?php if ($is_multilingual): ?>
+            <div class="notice notice-info" style="margin: 20px 0;">
+                <p><strong>Please configure your languages.</strong></p>
+                <p>If you see this message, there may be a configuration issue. Please try <a href="<?php echo esc_url(add_query_arg(['page' => 'ssm-settings', 'reconfigure' => '1'], admin_url('options-general.php'))); ?>">reconfiguring languages</a>.</p>
+            </div>
+        <?php else: ?>
+            <!-- For single-language sites, this shouldn't appear - auto-config should handle it -->
+            <div class="notice notice-warning" style="margin: 20px 0;">
+                <p><strong>Configuration issue detected.</strong></p>
+                <p>Please refresh the page or contact support if this message persists.</p>
+            </div>
+        <?php endif; ?>
     <?php endif; ?>
 </div>
 
@@ -821,6 +1283,25 @@ jQuery(document).ready(function($) {
         // Show/hide content
         $('.ssm-tab-content').hide();
         $('#tab-' + tab).show();
+    });
+    
+    // Fix HTML5 validation for hidden required fields
+    // When form is submitted, remove 'required' from fields in hidden tabs
+    $('#ssm-main-form').on('submit', function(e) {
+        // Find all hidden tab content
+        $('.ssm-tab-content:hidden').find('input[required], select[required], textarea[required]').each(function() {
+            // Remove required attribute from hidden fields
+            $(this).removeAttr('required');
+        });
+        
+        // Also handle fields that might be in containers with display:none
+        $('#ssm-main-form').find('input[required], select[required], textarea[required]').each(function() {
+            var $field = $(this);
+            // Check if field or any parent is hidden
+            if (!$field.is(':visible') || $field.closest(':hidden').length > 0) {
+                $field.removeAttr('required');
+            }
+        });
     });
     
     // Remove image button handler (AJAX)
@@ -863,22 +1344,81 @@ jQuery(document).ready(function($) {
         });
     });
     
-    // Reconfigure button handler
+    // Reconfigure button handler - show modal instead of confirm
     $('#ssm-reconfigure-btn').on('click', function() {
-        if (confirm('This will reset your language configuration. Continue?')) {
-            window.location.href = '?page=ssm-settings&reconfigure=1';
+        $('#ssm-reconfigure-modal').show();
+    });
+    
+    // Reconfigure modal handlers
+    $('#ssm-reconfigure-cancel').on('click', function() {
+        $('#ssm-reconfigure-modal').hide();
+    });
+    
+    $('#ssm-reconfigure-ok').on('click', function() {
+        window.location.href = '?page=ssm-settings&reconfigure=1';
+    });
+    
+    // Close modal when clicking outside
+    $('#ssm-reconfigure-modal').on('click', function(e) {
+        if ($(e.target).attr('id') === 'ssm-reconfigure-modal') {
+            $(this).hide();
         }
     });
     
-    // Show/hide data removal section
+    // Auto-dismiss success messages after 5 seconds
+    $('.notice.is-dismissible[id^="ssm-"]').each(function() {
+        var $notice = $(this);
+        setTimeout(function() {
+            $notice.fadeOut(300, function() {
+                $(this).remove();
+            });
+        }, 5000); // 5 seconds
+    });
+    
+    // Also handle WordPress dismiss button
+    $(document).on('click', '.notice.is-dismissible .notice-dismiss', function() {
+        $(this).closest('.notice').fadeOut(300, function() {
+            $(this).remove();
+        });
+    });
+    
+    // Reset button handler - show modal instead of confirm
+    $('#ssm-reset-btn').on('click', function() {
+        // Check if checkbox is checked
+        var checkbox = $('#ssm-reset-form input[name="ssm_reset_confirm"]');
+        if (!checkbox.is(':checked')) {
+            alert('Please check the confirmation checkbox first.');
+            return;
+        }
+        $('#ssm-reset-modal').show();
+    });
+    
+    // Reset modal handlers
+    $('#ssm-reset-cancel').on('click', function() {
+        $('#ssm-reset-modal').hide();
+    });
+    
+    $('#ssm-reset-confirm').on('click', function() {
+        // Submit the form
+        $('#ssm-reset-form').submit();
+    });
+    
+    // Close modal when clicking outside
+    $('#ssm-reset-modal').on('click', function(e) {
+        if ($(e.target).attr('id') === 'ssm-reset-modal') {
+            $(this).hide();
+        }
+    });
+    
+    // Show/hide reset section
     $('#show-data-removal').on('click', function() {
         var section = $('#data-removal-section');
         if (section.is(':visible')) {
             section.slideUp();
-            $(this).text('Show Data Removal Options');
+            $(this).text('Show Reset Options');
         } else {
             section.slideDown();
-            $(this).text('Hide Data Removal Options');
+            $(this).text('Hide Reset Options');
         }
     });
     
@@ -887,6 +1427,36 @@ jQuery(document).ready(function($) {
     var languagesContainer = $('#languages-container');
     
     if (addLanguageBtn.length && languagesContainer.length) {
+        // Function to update default language dropdown
+        function updateDefaultLanguageDropdown() {
+            var defaultLangSelect = $('#ssm_default_language');
+            if (defaultLangSelect.length) {
+                var currentValue = defaultLangSelect.val();
+                var options = [];
+                
+                languagesContainer.find('.language-row').each(function() {
+                    var code = $(this).find('input[name*="[code]"]').val();
+                    var name = $(this).find('input[name*="[name]"]').val();
+                    // Trim whitespace from code and name
+                    if (code) code = code.trim().replace(/\s+/g, '');
+                    if (name) name = name.trim();
+                    if (code && name) {
+                        options.push('<option value="' + code + '">' + name + ' (' + code.toUpperCase() + ')</option>');
+                    }
+                });
+                
+                defaultLangSelect.html(options.join(''));
+                
+                // Restore selection if it still exists
+                if (defaultLangSelect.find('option[value="' + currentValue + '"]').length) {
+                    defaultLangSelect.val(currentValue);
+                } else if (options.length > 0) {
+                    // Select first option if current value doesn't exist
+                    defaultLangSelect.val(defaultLangSelect.find('option:first').val());
+                }
+            }
+        }
+        
         addLanguageBtn.on('click', function() {
             var row = $('<div class="language-row" style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">' +
                        '<input type="text" name="ssm_languages[][code]" placeholder="Code (e.g., en, sv)" style="width: 120px;" required>' +
@@ -895,23 +1465,86 @@ jQuery(document).ready(function($) {
                        '</div>');
             languagesContainer.append(row);
             
+            // Auto-trim language code on blur
+            row.find('input[name*="[code]"]').on('blur', function() {
+                var $codeInput = $(this);
+                var code = $codeInput.val();
+                if (code) {
+                    // Trim and remove all spaces
+                    code = code.trim().replace(/\s+/g, '');
+                    $codeInput.val(code);
+                }
+                updateDefaultLanguageDropdown();
+            });
+            
+            // Auto-trim language name on blur
+            row.find('input[name*="[name]"]').on('blur', function() {
+                var $nameInput = $(this);
+                var name = $nameInput.val();
+                if (name) {
+                    name = name.trim();
+                    $nameInput.val(name);
+                }
+                updateDefaultLanguageDropdown();
+            });
+            
+            // Update dropdown when inputs change
+            row.find('input').on('input change', function() {
+                updateDefaultLanguageDropdown();
+            });
+            
+            updateDefaultLanguageDropdown();
+            
             row.find('.remove-language').on('click', function() {
                 if (languagesContainer.children().length > 1) {
                     row.remove();
+                    updateDefaultLanguageDropdown();
                 } else {
                     alert('You must have at least one language configured.');
                 }
             });
         });
         
+        // Auto-trim language codes on blur for existing inputs
+        languagesContainer.on('blur', 'input[name*="[code]"]', function() {
+            var $codeInput = $(this);
+            var code = $codeInput.val();
+            if (code) {
+                // Trim and remove all spaces
+                code = code.trim().replace(/\s+/g, '');
+                $codeInput.val(code);
+            }
+            updateDefaultLanguageDropdown();
+        });
+        
+        // Auto-trim language names on blur for existing inputs
+        languagesContainer.on('blur', 'input[name*="[name]"]', function() {
+            var $nameInput = $(this);
+            var name = $nameInput.val();
+            if (name) {
+                name = name.trim();
+                $nameInput.val(name);
+            }
+            updateDefaultLanguageDropdown();
+        });
+        
+        // Update dropdown when existing language inputs change
+        languagesContainer.on('input change', 'input[name*="[code]"], input[name*="[name]"]', function() {
+            updateDefaultLanguageDropdown();
+        });
+        
         // Add remove functionality to existing rows
         languagesContainer.on('click', '.remove-language', function() {
             if (languagesContainer.children().length > 1) {
                 $(this).closest('.language-row').remove();
+                updateDefaultLanguageDropdown();
             } else {
                 alert('You must have at least one language configured.');
             }
         });
+        
+        // Initial dropdown update
+        updateDefaultLanguageDropdown();
     }
     
     // Server time update for General Settings

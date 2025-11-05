@@ -9,6 +9,7 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 **Key Features:**
 - ✅ Scheduled maintenance windows with start/end dates and timezones
 - ✅ Multi-language support (automatic detection via WPML/Polylang or manual configuration)
+- ✅ Simplified UX for single-language sites (auto-configured)
 - ✅ Rich text editor for maintenance messages with HTML support
 - ✅ Optional countdown timer showing time until maintenance ends
 - ✅ Custom maintenance image upload with toggle option
@@ -19,22 +20,28 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 - ✅ Tabbed admin interface for easy management
 - ✅ Debug information tab for troubleshooting
 - ✅ Plugin-specific cache clearing (doesn't affect site-wide cache)
+- ✅ Settings link in plugin list for quick access
+- ✅ Success notifications with timestamps and auto-dismiss
 
 ## Installation
 
 1. Upload the `simple-scheduled-maintenance` folder to `/wp-content/plugins/` directory
 2. Activate the plugin through the 'Plugins' menu in WordPress
 3. Go to Settings → Maintenance Mode to configure
-4. On first activation, you'll be prompted to configure languages
+4. (Multilingual sites only) On first activation, you'll be prompted to configure languages
 
 ## Configuration
 
 ### First-Time Setup
 
+**For Multilingual Sites:**
 When you first activate the plugin, you'll see a language configuration modal:
 
 1. **Automatic Detection**: If WPML or Polylang is installed, select this to automatically detect all configured languages
 2. **Manual Configuration**: Add languages manually with codes (e.g., 'en', 'sv', 'no') and names (e.g., 'English', 'Swedish')
+
+**For Single-Language Sites:**
+The plugin automatically configures English - no setup needed! Just start configuring your maintenance settings.
 
 ### General Settings
 
@@ -54,7 +61,11 @@ When you first activate the plugin, you'll see a language configuration modal:
 
 ### Reconfigure Languages
 
-Click the "Reconfigure Languages" button to reset language configuration and choose a different method (automatic or manual).
+Click the "Reconfigure Languages" button (multilingual sites only) to reset language configuration and choose a different method (automatic or manual). A confirmation modal will appear before proceeding.
+
+### Reset All Plugin Data
+
+Use the "Reset Plugin Data" section to permanently delete all plugin settings, configurations, and uploaded files. A confirmation modal will appear to prevent accidental deletions. This action cannot be undone.
 
 ## Usage
 
@@ -115,17 +126,34 @@ The maintenance page will stop showing, and your configuration is preserved. Whe
 
 ### Can I remove all plugin data?
 
-Yes, there's a "Remove All Plugin Data" section at the bottom of the settings page. This will permanently delete all settings and configurations.
+Yes, there's a "Reset Plugin Data" section at the bottom of the settings page. This will permanently delete all settings, configurations, and uploaded files. You can also delete all data when uninstalling the plugin - the uninstall process will remove all plugin data from the database.
 
 ### Does it clear site-wide cache?
 
 No. The plugin only clears its own configuration cache to ensure settings update properly. It does not affect your site's overall cache.
+
+### What happens when I delete the plugin?
+
+When you delete the plugin from WordPress, all plugin data (options, settings, configurations, transients, and uploaded files) will be automatically removed from the database. This ensures a clean uninstall.
 
 ## Support
 
 For issues, feature requests, or questions, please contact the plugin author.
 
 ## Changelog
+
+### 2.4
+- **Simplified UX for single-language sites**: Auto-configure English, no manual config needed
+- **Settings link in plugin list**: Quick access to settings from Plugins page
+- **Success messages with timestamps**: Shows when actions were performed
+- **Auto-dismiss notifications**: Success messages automatically fade after 5 seconds
+- **Improved language code validation**: Auto-trims whitespace from language codes
+- **Enhanced reconfigure modal**: Better confirmation dialog with OK/Cancel buttons instead of JavaScript alert
+- **Custom reset confirmation modal**: Professional modal dialog for data deletion confirmation
+- **Fixed form validation**: Hidden required fields no longer cause validation errors
+- **Improved cache management**: Better cache clearing for language configurations
+- **Comprehensive data deletion**: Complete cleanup of all plugin data on reset and uninstall
+- **Code cleanup**: Removed debug logging, improved code organization
 
 ### 2.3
 - **Refactored template system**: Separated HTML/CSS into `template.php` file

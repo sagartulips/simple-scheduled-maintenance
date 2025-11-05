@@ -4,7 +4,7 @@ Tags: maintenance, scheduled maintenance, maintenance mode, multilingual, wpml, 
 Requires at least: 5.0
 Tested up to: 6.4
 Requires PHP: 7.0
-Stable tag: 2.3
+Stable tag: 2.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -17,6 +17,7 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 **Key Features:**
 * Scheduled maintenance windows with start/end dates and timezones
 * Multi-language support (automatic detection via WPML/Polylang or manual configuration)
+* Simplified UX for single-language sites (auto-configured)
 * Rich text editor for maintenance messages with HTML support
 * Optional countdown timer showing time until maintenance ends
 * Custom maintenance image upload with toggle option
@@ -27,20 +28,27 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 * Tabbed admin interface for easy management
 * Debug information tab for troubleshooting
 * Plugin-specific cache clearing (doesn't affect site-wide cache)
+* Settings link in plugin list for quick access
+* Success notifications with timestamps and auto-dismiss
 
 == Installation ==
 
 1. Upload the `simple-scheduled-maintenance` folder to `/wp-content/plugins/` directory
 2. Activate the plugin through the 'Plugins' menu in WordPress
 3. Go to Settings → Maintenance Mode to configure
-4. On first activation, you'll be prompted to configure languages
+4. (Multilingual sites only) On first activation, you'll be prompted to configure languages
 
 == Configuration ==
 
 **First-Time Setup:**
+
+For Multilingual Sites:
 When you first activate the plugin, you'll see a language configuration modal:
 * Automatic Detection: If WPML or Polylang is installed, select this to automatically detect all configured languages
 * Manual Configuration: Add languages manually with codes (e.g., 'en', 'sv', 'no') and names (e.g., 'English', 'Swedish')
+
+For Single-Language Sites:
+The plugin automatically configures English - no setup needed! Just start configuring your maintenance settings.
 
 **General Settings:**
 * Enable Maintenance Mode: Toggle maintenance mode on/off
@@ -55,6 +63,12 @@ When you first activate the plugin, you'll see a language configuration modal:
 * Default Language Tab: Set default messages that will be used as fallback
 * Language Tabs: Configure heading and description for each language
 * All descriptions support rich text formatting, images, and HTML
+
+**Reconfigure Languages:**
+Click the "Reconfigure Languages" button (multilingual sites only) to reset language configuration and choose a different method (automatic or manual). A confirmation modal will appear before proceeding.
+
+**Reset All Plugin Data:**
+Use the "Reset Plugin Data" section to permanently delete all plugin settings, configurations, and uploaded files. A confirmation modal will appear to prevent accidental deletions. This action cannot be undone.
 
 == Usage ==
 
@@ -112,6 +126,10 @@ Yes, there's a "Remove All Plugin Data" section at the bottom of the settings pa
 
 No. The plugin only clears its own configuration cache to ensure settings update properly. It does not affect your site's overall cache.
 
+= What happens when I delete the plugin? =
+
+When you delete the plugin from WordPress, all plugin data (options, settings, configurations, transients, and uploaded files) will be automatically removed from the database. This ensures a clean uninstall.
+
 == Screenshots ==
 
 1. Language Configuration Modal
@@ -122,6 +140,18 @@ No. The plugin only clears its own configuration cache to ensure settings update
 6. Maintenance Page Frontend
 
 == Changelog ==
+
+= 2.4 =
+* Simplified UX for single-language sites - auto-configure English, no manual config needed
+* Added Settings link in plugin list for quick access
+* Success messages now show timestamps and auto-dismiss after 5 seconds
+* Improved language code validation with auto-trimming of whitespace
+* Enhanced reconfigure modal with better confirmation dialog (replaced JS alert)
+* Custom reset confirmation modal for data deletion (replaced JS alert)
+* Fixed form validation issues with hidden required fields
+* Improved cache management for language configurations
+* Comprehensive data deletion on reset and plugin uninstall
+* Code cleanup and optimization
 
 = 2.3 =
 * Refactored to use separate template.php file (self-contained, no CDN dependencies)
@@ -152,6 +182,9 @@ No. The plugin only clears its own configuration cache to ensure settings update
 * Timezone handling improvements
 
 == Upgrade Notice ==
+
+= 2.4 =
+Improved UX for single-language sites. Better notification system with timestamps. Professional modal dialogs. Comprehensive data deletion on reset and uninstall.
 
 = 2.3 =
 Plugin-specific cache clearing only - no impact on site-wide cache. Improved error handling.
