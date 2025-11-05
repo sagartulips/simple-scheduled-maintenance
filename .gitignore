@@ -45,6 +45,9 @@ QUICK_START.md
 sync-to-wp.ps1
 sync-to-wp.bat
 
+# Screenshots folder (useful for later, but not for public repo)
+screenshots/
+
 # ignore all files starting with . or ~ (except .gitignore)
 .*
 !/.gitignore
