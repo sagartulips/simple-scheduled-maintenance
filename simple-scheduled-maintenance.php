@@ -473,8 +473,10 @@ function ssm_show_maintenance_page() {
     
     // Get language-specific messages with fallback
     $heading = ssm_get_maintenance_message('heading', 'Site Under Maintenance', $current_lang);
-    $desc    = ssm_get_maintenance_message('description', 'We\'re working hard to improve the user experience. Stay tuned!', $current_lang);
-    $countdown_text = ssm_get_maintenance_message('countdown_text', 'We\'ll be back in:', $current_lang);
+    // $desc    = ssm_get_maintenance_message('description', 'We\'re working hard to improve the user experience. Stay tuned!', $current_lang);
+    // $countdown_text = ssm_get_maintenance_message('countdown_text', 'We\'ll be back in:', $current_lang);
+    $desc    = ssm_get_maintenance_message('description', '', $current_lang);
+    $countdown_text = ssm_get_maintenance_message('countdown_text', '', $current_lang);
     
     // Get timezone and dates for countdown
     try {
