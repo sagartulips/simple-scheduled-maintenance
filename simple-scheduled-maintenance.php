@@ -3,7 +3,7 @@
  * Plugin Name: Simple Scheduled Maintenance
  * Plugin URI: https://github.com/sagartulips/simple-scheduled-maintenance
  * Description: A powerful WordPress plugin for scheduled maintenance mode with multi-language support, countdown timer, and flexible configuration. Automatically detects WPML/Polylang or allows manual language setup.
- * Version: 2.4
+ * Version: 2.6
  * Author: Tulips
  * Author URI: https://github.com/sagartulips
  * Developer: Sagar GC
@@ -18,7 +18,7 @@
  * Network: false
  * 
  * @package SimpleScheduledMaintenance
- * @version 2.4
+ * @version 2.5
  * @author Sagar GC
  * @company Tulips
  * @email sagar@tulipstechnlogies.com
@@ -41,7 +41,7 @@ defined('ABSPATH') || exit;
 
 define('SSM_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('SSM_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('SSM_VERSION', '2.4');
+define('SSM_VERSION', '2.6');
 
 // Register activation hook
 register_activation_hook(__FILE__, 'ssm_plugin_activation');
@@ -133,6 +133,8 @@ function ssm_plugin_uninstall() {
 function ssm_clear_cache() {
     // Clear plugin-specific transients
     delete_transient('ssm_maintenance_status');
+    delete_transient('ssm_window_ended');
+    delete_transient('ssm_maintenance_active');
     
     // Clear plugin-specific object cache group if available
     if (function_exists('wp_cache_flush_group')) {
@@ -174,22 +176,254 @@ function ssm_clear_cache() {
 }
 
 /**
+ * Send email notification when maintenance mode starts
+ * Optimized: Early checks to prevent unnecessary processing
+ */
+function ssm_send_maintenance_start_email() {
+    // Early return if maintenance mode is disabled
+    if (!get_option('ssm_enabled')) {
+        return; // Don't send emails if maintenance mode is disabled
+    }
+    
+    // Early return if email notifications are disabled
+    $email_enabled = get_option('ssm_email_notifications', 0);
+    if (!$email_enabled) {
+        return;
+    }
+    
+    $email_addresses = get_option('ssm_email_addresses', '');
+    // Fallback to admin email if no addresses configured
+    if (empty($email_addresses)) {
+        $email_addresses = get_option('admin_email', '');
+        if (empty($email_addresses)) {
+            return;
+        }
+    }
+    
+    // Check if we already sent notification for this maintenance window
+    $start_time = get_option('ssm_start_time');
+    $end_time = get_option('ssm_end_time');
+    $notification_key = 'ssm_email_sent_' . md5($start_time . $end_time);
+    
+    if (get_transient($notification_key)) {
+        return; // Already sent notification for this window
+    }
+    
+    $emails = array_map('trim', explode(',', $email_addresses));
+    $emails = array_filter($emails, 'is_email');
+    
+    if (empty($emails)) {
+        return;
+    }
+    
+    $site_name = get_bloginfo('name');
+    $site_url = home_url();
+    $timezone = get_option('ssm_timezone', get_option('timezone_string', 'UTC'));
+    
+    try {
+        $tz = new DateTimeZone($timezone);
+        $start_dt = DateTime::createFromFormat('Y-m-d\TH:i', $start_time, $tz);
+        if (!$start_dt) {
+            $start_dt = DateTime::createFromFormat('Y-m-d H:i', str_replace('T', ' ', $start_time), $tz);
+        }
+        $end_dt = DateTime::createFromFormat('Y-m-d\TH:i', $end_time, $tz);
+        if (!$end_dt) {
+            $end_dt = DateTime::createFromFormat('Y-m-d H:i', str_replace('T', ' ', $end_time), $tz);
+        }
+        
+        if ($start_dt && $end_dt) {
+            $start_formatted = $start_dt->format('Y-m-d H:i:s T');
+            $end_formatted = $end_dt->format('Y-m-d H:i:s T');
+            $duration = $start_dt->diff($end_dt);
+            $duration_text = $duration->format('%h hours %i minutes');
+        } else {
+            $start_formatted = $start_time;
+            $end_formatted = $end_time;
+            $duration_text = 'Unknown';
+        }
+    } catch (Exception $e) {
+        $start_formatted = $start_time;
+        $end_formatted = $end_time;
+        $duration_text = 'Unknown';
+    }
+    
+    // Get custom subject and message, or use defaults
+    $custom_subject = get_option('ssm_email_subject_start', '');
+    $custom_message = get_option('ssm_email_message_start', '');
+    
+    if (!empty($custom_subject)) {
+        $subject = str_replace(
+            ['{site_name}', '{site_url}', '{start_time}', '{end_time}', '{duration}', '{timezone}'],
+            [$site_name, $site_url, $start_formatted, $end_formatted, $duration_text, $timezone],
+            $custom_subject
+        );
+    } else {
+        $subject = sprintf('[%s] Maintenance Mode Activated', $site_name);
+    }
+    
+    if (!empty($custom_message)) {
+        $message = str_replace(
+            ['{site_name}', '{site_url}', '{start_time}', '{end_time}', '{duration}', '{timezone}'],
+            [$site_name, $site_url, $start_formatted, $end_formatted, $duration_text, $timezone],
+            $custom_message
+        );
+        // Convert HTML to plain text if needed
+        $message = wp_strip_all_tags($message);
+    } else {
+        $message = sprintf(
+            "Maintenance mode has been ACTIVATED for %s\n\n" .
+            "Site: %s\n" .
+            "Start Time: %s\n" .
+            "End Time: %s\n" .
+            "Duration: %s\n" .
+            "Timezone: %s\n\n" .
+            "Your site is now showing a maintenance page to all visitors (except administrators and editors).\n\n" .
+            "You can manage maintenance settings at: %s\n",
+            $site_name,
+            $site_url,
+            $start_formatted,
+            $end_formatted,
+            $duration_text,
+            $timezone,
+            admin_url('options-general.php?page=ssm-settings')
+        );
+    }
+    
+    $headers = ['Content-Type: text/plain; charset=UTF-8'];
+    $from_email = get_option('admin_email');
+    if ($from_email) {
+        $headers[] = sprintf('From: %s <%s>', $site_name, $from_email);
+    }
+    
+    $sent = wp_mail($emails, $subject, $message, $headers);
+    
+    if ($sent) {
+        // Set transient to prevent duplicate emails (expires when maintenance ends + 1 hour)
+        if ($end_dt) {
+            $expiry = $end_dt->getTimestamp() - time() + 3600; // End time + 1 hour
+            if ($expiry > 0) {
+                set_transient($notification_key, true, $expiry);
+            }
+        }
+    }
+}
+
+/**
+ * Send email notification when maintenance mode ends
+ * Optimized: Early checks to prevent unnecessary processing
+ */
+function ssm_send_maintenance_end_email() {
+    // Early return if maintenance mode is disabled
+    if (!get_option('ssm_enabled')) {
+        return; // Don't send emails if maintenance mode is disabled
+    }
+    
+    // Early return if email notifications are disabled
+    $email_enabled = get_option('ssm_email_notifications', 0);
+    if (!$email_enabled) {
+        return;
+    }
+    
+    $notify_on_end = get_option('ssm_email_notify_end', 0);
+    if (!$notify_on_end) {
+        return;
+    }
+    
+    $email_addresses = get_option('ssm_email_addresses', '');
+    // Fallback to admin email if no addresses configured
+    if (empty($email_addresses)) {
+        $email_addresses = get_option('admin_email', '');
+        if (empty($email_addresses)) {
+            return;
+        }
+    }
+    
+    // Check if we already sent end notification
+    $end_notification_key = 'ssm_email_end_sent_' . md5(get_option('ssm_start_time') . get_option('ssm_end_time'));
+    if (get_transient($end_notification_key)) {
+        return;
+    }
+    
+    $emails = array_map('trim', explode(',', $email_addresses));
+    $emails = array_filter($emails, 'is_email');
+    
+    if (empty($emails)) {
+        return;
+    }
+    
+    $site_name = get_bloginfo('name');
+    $site_url = home_url();
+    
+    // Get custom subject and message, or use defaults
+    $custom_subject = get_option('ssm_email_subject_end', '');
+    $custom_message = get_option('ssm_email_message_end', '');
+    
+    if (!empty($custom_subject)) {
+        $subject = str_replace(
+            ['{site_name}', '{site_url}'],
+            [$site_name, $site_url],
+            $custom_subject
+        );
+    } else {
+        $subject = sprintf('[%s] Maintenance Mode Completed', $site_name);
+    }
+    
+    if (!empty($custom_message)) {
+        $message = str_replace(
+            ['{site_name}', '{site_url}'],
+            [$site_name, $site_url],
+            $custom_message
+        );
+        // Convert HTML to plain text if needed
+        $message = wp_strip_all_tags($message);
+    } else {
+        $message = sprintf(
+            "Maintenance mode has been COMPLETED for %s\n\n" .
+            "Site: %s\n" .
+            "Your site is now accessible to all visitors.\n\n" .
+            "You can manage maintenance settings at: %s\n",
+            $site_name,
+            $site_url,
+            admin_url('options-general.php?page=ssm-settings')
+        );
+    }
+    
+    $headers = ['Content-Type: text/plain; charset=UTF-8'];
+    $from_email = get_option('admin_email');
+    if ($from_email) {
+        $headers[] = sprintf('From: %s <%s>', $site_name, $from_email);
+    }
+    
+    $sent = wp_mail($emails, $subject, $message, $headers);
+    
+    if ($sent) {
+        // Set transient for 24 hours to prevent duplicate emails
+        set_transient($end_notification_key, true, 24 * HOUR_IN_SECONDS);
+    }
+}
+
+/**
  * Check if maintenance should be active (better error handling)
+ * Optimized: Returns immediately if disabled or window ended to save resources
  */
 function ssm_should_show_maintenance() {
+    // Early return if maintenance mode is disabled - no further checks needed
     $enabled = get_option('ssm_enabled');
-    
     if (!$enabled) {
-        error_log('SSM DEBUG: Maintenance is disabled');
         return false;
+    }
+    
+    // Early return if window has ended (cached check - avoids date parsing)
+    $window_ended = get_transient('ssm_window_ended');
+    if ($window_ended === 'yes') {
+        return false; // Window has ended - return immediately
     }
     
     $start = get_option('ssm_start_time');
     $end = get_option('ssm_end_time');
     
     if (!$start || !$end) {
-        error_log('SSM DEBUG: Start or end time not set. Start: ' . ($start ?: 'empty') . ', End: ' . ($end ?: 'empty'));
-        return false;
+        return false; // No dates configured - return immediately
     }
     
     $timezone = get_option('ssm_timezone', get_option('timezone_string', 'UTC'));
@@ -233,39 +467,16 @@ function ssm_should_show_maintenance() {
         }
         
         if (!$start_dt || !$end_dt) {
-            error_log('SSM DEBUG: Invalid date format. Start: ' . $start . ', End: ' . $end);
-            error_log('SSM DEBUG: Start parsed: ' . ($start_dt ? $start_dt->format('Y-m-d H:i:s T') : 'FAILED'));
-            error_log('SSM DEBUG: End parsed: ' . ($end_dt ? $end_dt->format('Y-m-d H:i:s T') : 'FAILED'));
-            return false;
+            return false; // Invalid date format - return immediately
         }
         
         // Compare times in the same timezone
         $is_active = ($current_time >= $start_dt && $current_time <= $end_dt);
         
-        // Always log for debugging when maintenance should be active
-        error_log('SSM DEBUG: Current time: ' . $current_time->format('Y-m-d H:i:s T'));
-        error_log('SSM DEBUG: Start time: ' . $start_dt->format('Y-m-d H:i:s T'));
-        error_log('SSM DEBUG: End time: ' . $end_dt->format('Y-m-d H:i:s T'));
-        error_log('SSM DEBUG: Current >= Start: ' . ($current_time >= $start_dt ? 'YES' : 'NO'));
-        error_log('SSM DEBUG: Current <= End: ' . ($current_time <= $end_dt ? 'YES' : 'NO'));
-        error_log('SSM DEBUG: Is Active: ' . ($is_active ? 'YES' : 'NO'));
-        
-        if (!$is_active) {
-            if ($current_time < $start_dt) {
-                $diff = $current_time->diff($start_dt);
-                error_log('SSM DEBUG: Not started yet. Time until start: ' . $diff->format('%h hours %i minutes %s seconds'));
-            } elseif ($current_time > $end_dt) {
-                $diff = $end_dt->diff($current_time);
-                error_log('SSM DEBUG: Already ended. Time since end: ' . $diff->format('%h hours %i minutes %s seconds'));
-            }
-        }
-        
         return $is_active;
         
     } catch (Exception $e) {
-        error_log('SSM DEBUG Error: ' . $e->getMessage());
-        error_log('SSM DEBUG Stack: ' . $e->getTraceAsString());
-        return false;
+        return false; // Error parsing dates - return false silently
     }
 }
 
@@ -419,43 +630,164 @@ function ssm_get_maintenance_message($key, $default, $lang = null) {
 
 /**
  * Function to show the maintenance page
+ * Optimized: Early returns to prevent unnecessary processing when disabled or ended
+ * 
+ * IMPORTANT: This function is called via WordPress hooks on every page request.
+ * However, it exits immediately (with only 1 database query) when:
+ * - Maintenance mode is disabled
+ * - Maintenance window has ended (cached check)
+ * 
+ * NO background checking occurs - only on-demand checks when pages are requested.
  */
 function ssm_show_maintenance_page() {
+    // Preview mode (admin/editor only): allow previewing the maintenance page even when the time window isn't active.
+    // Requirement: preview should only be available when maintenance mode is enabled.
+    // IMPORTANT:
+    // - Preview is ONLY allowed for logged-in admins/editors
+    // - Preview should NOT send emails or set any "active/ended" transients
+    // - Preview should NOT return 503 (so it doesn't pollute monitoring / logs)
+    $preview_mode = isset($_GET['ssm_preview']) && $_GET['ssm_preview'] == '1';
+    
+    // CRITICAL: Check if maintenance mode is enabled FIRST.
+    // Only 1 database query: get_option('ssm_enabled')
+    $enabled = get_option('ssm_enabled');
+    
+    $can_preview = $enabled && $preview_mode && is_user_logged_in() && (current_user_can('administrator') || current_user_can('editor'));
+    
+    if (!$enabled) {
+        return; // Exit immediately - maintenance mode disabled (no preview allowed)
+    }
+    
+    // CRITICAL: Check if maintenance window has ended (cached check) - unless previewing.
+    // Once window ends, this transient is cached for 24 hours - no repeated checks.
+    $window_ended = get_transient('ssm_window_ended');
+    if ($window_ended === 'yes' && !$can_preview) {
+        return; // Exit immediately - window ended
+    }
+    
     // Skip for admin pages and AJAX requests
     if (is_admin() || (defined('DOING_AJAX') && DOING_AJAX)) {
-        error_log('SSM DEBUG: Skipping - Admin or AJAX request');
         return;
     }
     
     // Skip for login page
     if (isset($GLOBALS['pagenow']) && in_array($GLOBALS['pagenow'], ['wp-login.php', 'wp-register.php'])) {
-        error_log('SSM DEBUG: Skipping - Login page');
         return;
     }
     
-    // IMPORTANT: Allow admins and editors to bypass maintenance
-    // They should always be able to access the site normally
-    // However, if they add ?ssm_preview=1 to the URL, they can preview the maintenance page
-    $preview_mode = isset($_GET['ssm_preview']) && $_GET['ssm_preview'] == '1';
-    
+    // IMPORTANT: Allow admins and editors to bypass maintenance.
+    // However, if they add ?ssm_preview=1 to the URL, they can preview the maintenance page.
     if (is_user_logged_in() && (current_user_can('administrator') || current_user_can('editor'))) {
         if (!$preview_mode) {
-            error_log('SSM DEBUG: Skipping - User is admin/editor (bypassing maintenance)');
+            return; // Admins/editors bypass maintenance unless preview mode
+        }
+    } else {
+        // Non-admins are never allowed to preview.
+        if ($preview_mode) {
             return;
-        } else {
-            error_log('SSM DEBUG: Admin/editor preview mode enabled');
         }
     }
-
-    error_log('SSM DEBUG: Checking if maintenance should be shown...');
     
-    // Use improved check function for better error handling
-    if (!ssm_should_show_maintenance()) {
-        error_log('SSM DEBUG: Maintenance check returned false, not showing page');
+    // Get cached active state first (avoids unnecessary date parsing if already checked).
+    // When active, we store a transient with an expiry equal to the end timestamp,
+    // so most requests during an active window can skip all DateTime parsing.
+    $was_active = $can_preview ? false : get_transient('ssm_maintenance_active');
+    
+    // OPTIMIZATION: Fast-path for active window.
+    $is_active = false;
+    if (!$can_preview && $was_active) {
+        if (is_array($was_active) && isset($was_active['end_ts'])) {
+            // Safety: ensure end_ts hasn't passed (should be enforced by transient expiry).
+            if (time() < (int) $was_active['end_ts']) {
+                $is_active = true;
+            } else {
+                delete_transient('ssm_maintenance_active');
+            }
+        } else {
+            // Back-compat (older transient value was boolean true)
+            $is_active = true;
+        }
+    }
+    
+    // If not active via fast-path, compute status (date parsing).
+    if (!$is_active && $window_ended !== 'yes') {
+        // Only call ssm_should_show_maintenance() if window hasn't ended
+        // This function now also checks window_ended internally for double safety
+        $is_active = $can_preview ? false : ssm_should_show_maintenance();
+    }
+    
+    // Check if maintenance window has ended (not just inactive, but actually ended)
+    if (!$is_active && !$can_preview) {
+        // Only check dates if window_ended transient doesn't exist (optimization)
+        // This prevents redundant date parsing when we already know window ended
+        if ($window_ended !== 'yes') {
+            $start = get_option('ssm_start_time');
+            $end = get_option('ssm_end_time');
+            
+            // Quick check: if we have dates, see if end time has passed
+            if ($start && $end) {
+                try {
+                    $timezone = get_option('ssm_timezone', get_option('timezone_string', 'UTC'));
+                    $tz = new DateTimeZone($timezone);
+                    $current_time = new DateTime('now', $tz);
+                    $end_dt = DateTime::createFromFormat('Y-m-d\TH:i', $end, $tz);
+                    if (!$end_dt) {
+                        $end_dt = DateTime::createFromFormat('Y-m-d H:i', str_replace('T', ' ', $end), $tz);
+                    }
+                    
+                    // If end time has passed, cache this result to skip future checks
+                    if ($end_dt && $current_time > $end_dt) {
+                        // Set transient for 24 hours - maintenance window has ended
+                        set_transient('ssm_window_ended', 'yes', 24 * HOUR_IN_SECONDS);
+                        
+                        // Send end notification if needed (only if was previously active)
+                        if ($was_active) {
+                            ssm_send_maintenance_end_email();
+                            delete_transient('ssm_maintenance_active');
+                        }
+                        
+                        return; // Window has ended - exit immediately
+                    }
+                } catch (Exception $e) {
+                    // Silent fail - continue with normal check
+                }
+            }
+        }
+        
+        // Not active and not ended (hasn't started yet or no dates)
         return;
     }
-
-    error_log('SSM DEBUG: Maintenance should be shown! Displaying maintenance page...');
+    
+    // Clear the "window ended" transient if we're active (new window started)
+    // Do not touch this transient in preview mode.
+    if (!$can_preview) {
+        delete_transient('ssm_window_ended');
+    }
+    
+    // Send email notification when maintenance becomes active
+    if (!$can_preview && !$was_active) {
+        ssm_send_maintenance_start_email();
+        // Set transient to track active state (expires when maintenance ends)
+        $end = get_option('ssm_end_time');
+        if ($end) {
+            try {
+                $timezone = get_option('ssm_timezone', get_option('timezone_string', 'UTC'));
+                $tz = new DateTimeZone($timezone);
+                $end_dt = DateTime::createFromFormat('Y-m-d\TH:i', $end, $tz);
+                if (!$end_dt) {
+                    $end_dt = DateTime::createFromFormat('Y-m-d H:i', str_replace('T', ' ', $end), $tz);
+                }
+                if ($end_dt) {
+                    $expiry = $end_dt->getTimestamp() - time();
+                    if ($expiry > 0) {
+                        set_transient('ssm_maintenance_active', ['end_ts' => $end_dt->getTimestamp()], $expiry);
+                    }
+                }
+            } catch (Exception $e) {
+                // Silent fail
+            }
+        }
+    }
 
     // Get options
     $timezone       = get_option('ssm_timezone', get_option('timezone_string', 'UTC'));
@@ -510,14 +842,30 @@ function ssm_show_maintenance_page() {
             $end_dt = DateTime::createFromFormat('Y-m-d H:i:s', str_replace('T', ' ', $end), $tz);
         }
         
+        // If dates are missing or can't be parsed:
+        // - In normal mode: bail out (can't determine window)
+        // - In preview mode: disable countdown safely and still render the page
         if (!$start_dt || !$end_dt) {
-            error_log('SSM: Could not parse dates in maintenance page. Start: ' . $start . ', End: ' . $end);
-            return;
+            if (!$can_preview) {
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('SSM: Could not parse dates in maintenance page. Start: ' . $start . ', End: ' . $end);
+            }
+                return;
+            }
+            // Preview mode: render without countdown (template requires $countdown_end if countdown is on)
+            $show_countdown = 0;
         }
         
-        // Double-check we're in maintenance window (should already be checked, but safety first)
-        // All times are in the same timezone, so comparison should work correctly
-        if ($current_time >= $start_dt && $current_time <= $end_dt) {
+        // Decide whether to render page:
+        // - Normal mode: only during active window
+        // - Preview mode: always render (admin/editor only)
+        $should_render = $can_preview;
+        if (!$can_preview && $start_dt && $end_dt) {
+            // All times are in the same timezone, so comparison should work correctly
+            $should_render = ($current_time >= $start_dt && $current_time <= $end_dt);
+        }
+        
+        if ($should_render) {
         // Set page title
         add_filter('pre_get_document_title', function () use ($heading) {
             return esc_html($heading) . ' | Maintenance Mode';
@@ -536,12 +884,20 @@ function ssm_show_maintenance_page() {
         }
 
         // Calculate countdown to end time (in seconds)
-        $countdown_end = $end_dt->getTimestamp();
-        $countdown_seconds = $countdown_end - time();
+        if ($show_countdown && $end_dt) {
+            $countdown_end = $end_dt->getTimestamp();
+            $countdown_seconds = $countdown_end - time();
+            // In preview mode (or if end is in the past), don't run a negative countdown loop.
+            if ($countdown_seconds <= 0) {
+                $show_countdown = 0;
+                $countdown_end = time();
+            }
+        } else {
+            // Safe defaults (template will not reference $countdown_end if countdown is off)
+            $countdown_end = time();
+            $countdown_seconds = 0;
+        }
 
-        // Output maintenance page
-        error_log('SSM DEBUG: Starting to output maintenance page HTML...');
-        
         // Clear any output buffers to prevent conflicts
         while (ob_get_level()) {
             ob_end_clean();
@@ -549,10 +905,19 @@ function ssm_show_maintenance_page() {
         
         // Send proper headers
         if (!headers_sent()) {
-            status_header(503);
+            if ($can_preview) {
+                status_header(200);
+                header('X-Robots-Tag: noindex, nofollow', true);
+            } else {
+                status_header(503);
+            }
             nocache_headers();
             header('Content-Type: text/html; charset=utf-8');
         }
+        
+        // Render the maintenance page as a minimal response for performance.
+        // Skipping wp_head/wp_footer prevents themes/plugins from enqueueing large assets.
+        $ssm_skip_wp_head = true;
         
         // Load template file
         $template_path = SSM_PLUGIN_PATH . 'template.php';
@@ -560,36 +925,23 @@ function ssm_show_maintenance_page() {
             include $template_path;
         } else {
             // Fallback if template doesn't exist
-            error_log('SSM ERROR: Template file not found at: ' . $template_path);
             echo '<!DOCTYPE html><html><head><title>Maintenance Mode</title></head><body><h1>Site Under Maintenance</h1><p>Please check back soon.</p></body></html>';
         }
-        
-        error_log('SSM DEBUG: Maintenance page HTML output complete, calling exit...');
         
         // Exit immediately
         exit;
         }
         
     } catch (Exception $e) {
-        error_log('SSM DEBUG Timezone Error: ' . $e->getMessage());
-        error_log('SSM DEBUG Stack: ' . $e->getTraceAsString());
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('SSM DEBUG Timezone Error: ' . $e->getMessage());
+            error_log('SSM DEBUG Stack: ' . $e->getTraceAsString());
+        }
         return;
     }
 }
 // Hook early to catch all requests before theme loads
 // Using priority 1 to run before most other plugins
+// NOTE: Hooks must be registered (WordPress requirement), but they exit immediately
+// when maintenance mode is disabled or window has ended - minimal overhead (1 query/transient check)
 add_action('template_redirect', 'ssm_show_maintenance_page', 1);
-
-// Also try hooking into init as a backup (runs earlier)
-add_action('init', function() {
-    // Only run on frontend, not admin
-    if (!is_admin() && !(defined('DOING_AJAX') && DOING_AJAX)) {
-        // Check if maintenance should be active
-        if (function_exists('ssm_should_show_maintenance') && ssm_should_show_maintenance()) {
-            // If user is not admin/editor, show maintenance page
-            if (!is_user_logged_in() || !(current_user_can('administrator') || current_user_can('editor'))) {
-                error_log('SSM DEBUG: Init hook triggered, maintenance should be active');
-            }
-        }
-    }
-}, 1);

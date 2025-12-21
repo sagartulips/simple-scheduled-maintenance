@@ -18,10 +18,12 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 - ✅ Language-specific messages for each configured language
 - ✅ Automatic language detection based on current site language
 - ✅ Tabbed admin interface for easy management
+- ✅ Email notifications with customizable subject and message (WordPress native wp_mail)
 - ✅ Debug information tab for troubleshooting
 - ✅ Plugin-specific cache clearing (doesn't affect site-wide cache)
 - ✅ Settings link in plugin list for quick access
 - ✅ Success notifications with timestamps and auto-dismiss
+- ✅ **Optimized performance**: Zero resource usage when disabled or maintenance window ended
 
 ## Installation
 
@@ -52,6 +54,15 @@ The plugin automatically configures English - no setup needed! Just start config
 - **Show Maintenance Image**: Toggle to show/hide the maintenance image
 - **Maintenance Image**: Upload a custom image for the maintenance page (with remove button)
 - **Show Countdown**: Enable/disable the countdown timer
+
+### Email Notifications
+
+- **Enable Email Notifications**: Toggle email alerts on/off
+- **Email Addresses**: Comma-separated list of recipients (defaults to admin email)
+- **Maintenance Start Email**: Customize subject and message for start notifications
+- **Maintenance End Email**: Customize subject and message for end notifications
+- **Placeholders**: Use `{site_name}`, `{site_url}`, `{start_time}`, `{end_time}`, `{duration}`, `{timezone}` in messages
+- Uses WordPress native `wp_mail()` function for reliable email delivery
 
 ### Language-Specific Messages
 
@@ -116,6 +127,12 @@ The plugin only clears its own configuration cache, not site-wide cache. This en
 
 The plugin uses WordPress's `template_redirect` hook to check maintenance status on every page load. No cron jobs or external schedulers needed - it works automatically.
 
+**Performance Optimizations:**
+- **Zero resource usage when disabled**: If "Enable Maintenance Mode" is unchecked, the plugin exits immediately with only 1 database query
+- **Zero resource usage when window ended**: Once maintenance window ends, a cached transient prevents all date parsing and checks
+- **Early exits**: All functions check enabled/ended status first before any processing
+- **No background checks**: The plugin only runs checks when a page is requested, not in the background
+
 ### Can I use it without WPML/Polylang?
 
 Yes! You can manually configure languages. The plugin will work with any number of languages you configure.
@@ -132,6 +149,14 @@ Yes, there's a "Reset Plugin Data" section at the bottom of the settings page. T
 
 No. The plugin only clears its own configuration cache to ensure settings update properly. It does not affect your site's overall cache.
 
+### Does it run background checks when disabled?
+
+No. When maintenance mode is disabled or the maintenance window has ended, the plugin:
+- Exits immediately with minimal database queries (1 query when disabled, 1 transient check when ended)
+- Does not parse dates or perform timezone calculations
+- Does not send emails or perform any background processing
+- Uses cached transients to prevent redundant checks when window has ended
+
 ### What happens when I delete the plugin?
 
 When you delete the plugin from WordPress, all plugin data (options, settings, configurations, transients, and uploaded files) will be automatically removed from the database. This ensures a clean uninstall.
@@ -141,6 +166,21 @@ When you delete the plugin from WordPress, all plugin data (options, settings, c
 For issues, feature requests, or questions, please contact the plugin author.
 
 ## Changelog
+
+### 2.6
+- **Admin preview anytime (when enabled)**: Admin/editor can preview maintenance page via `?ssm_preview=1` even if the time window is not active
+- **Faster during active windows**: Cached active state reduces repeated DateTime parsing
+- **Faster maintenance page**: Maintenance template skips `wp_head()`/`wp_footer()` to avoid loading heavy theme/plugin assets
+- **Cleanup**: Removed leftover debug output from settings page
+
+### 2.5
+- **Email Notifications**: Added email alerts when maintenance starts/ends
+- **Customizable Email Templates**: Custom subject and message fields with placeholders
+- **Email Notifications Tab**: Dedicated tab for all email settings
+- **Performance Optimizations**: Zero resource usage when disabled or window ended
+- **Early Exit Optimizations**: All functions check enabled/ended status before processing
+- **Cached Window Status**: Transient caching prevents redundant date parsing when window ended
+- **Optimized Email Functions**: Email functions check maintenance status before processing
 
 ### 2.4
 - **Simplified UX for single-language sites**: Auto-configure English, no manual config needed
@@ -194,6 +234,27 @@ This plugin is licensed under GPLv2 or later.
 
 ## Technical Details
 
+### Performance & Resource Usage
+
+**When Maintenance Mode is DISABLED:**
+- Only 1 database query (`get_option('ssm_enabled')`)
+- Immediate exit - zero date parsing, zero timezone calculations, zero email processing
+- No background checks or cron jobs
+- Hooks registered but exit immediately on first check
+
+**When Maintenance Window has ENDED:**
+- Only 1 transient check (`get_transient('ssm_window_ended')`)
+- Immediate exit - zero date parsing, zero timezone calculations
+- Cached result prevents redundant checks for 24 hours
+- No background processing
+
+**When Maintenance Mode is ACTIVE:**
+- Full functionality with date/time checks
+- Email notifications sent (if enabled)
+- Maintenance page displayed to visitors
+
+**Important:** The plugin uses WordPress hooks (`template_redirect` and `init`) which only run when a page is requested. There are NO background processes, cron jobs, or continuous checks. All checks happen on-demand when a visitor requests a page.
+
 ### Template System
 The plugin uses a separate `template.php` file for the maintenance page HTML. This provides:
 - Clean separation of concerns
@@ -206,4 +267,11 @@ The plugin uses a separate `template.php` file for the maintenance page HTML. Th
 - Toggle option: Enable/disable image display
 - AJAX removal: Remove uploaded images without page reload
 - Responsive: Images scale properly on all devices
+
+### Email System
+- Uses WordPress native `wp_mail()` function
+- Customizable subject and message templates
+- Placeholder support for dynamic content
+- Duplicate prevention using transients
+- Only sends emails when maintenance state changes (start/end)
 

@@ -246,7 +246,7 @@
             }
         }
     </style>
-    <?php wp_head(); ?>
+    <?php if (empty($ssm_skip_wp_head)) { wp_head(); } ?>
 </head>
 <body>
     <div class="maintenance-wrapper">
@@ -334,7 +334,7 @@
     </script>
     <?php endif; ?>
     
-    <?php wp_footer(); ?>
+    <?php if (empty($ssm_skip_wp_head)) { wp_footer(); } ?>
 </body>
 </html>
 

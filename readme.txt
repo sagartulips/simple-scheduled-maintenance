@@ -4,7 +4,7 @@ Tags: maintenance, scheduled maintenance, maintenance mode, multilingual, wpml, 
 Requires at least: 5.0
 Tested up to: 6.4
 Requires PHP: 7.0
-Stable tag: 2.4
+Stable tag: 2.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,8 +26,10 @@ Simple Scheduled Maintenance allows you to schedule maintenance windows for your
 * Language-specific messages for each configured language
 * Automatic language detection based on current site language
 * Tabbed admin interface for easy management
+* Email notifications with customizable subject and message (WordPress native wp_mail)
 * Debug information tab for troubleshooting
 * Plugin-specific cache clearing (doesn't affect site-wide cache)
+* Optimized performance: Zero resource usage when disabled or maintenance window ended
 * Settings link in plugin list for quick access
 * Success notifications with timestamps and auto-dismiss
 
@@ -58,6 +60,14 @@ The plugin automatically configures English - no setup needed! Just start config
 * Show Maintenance Image: Toggle to show/hide the maintenance image
 * Maintenance Image: Upload a custom image for the maintenance page (with remove button)
 * Show Countdown: Enable/disable the countdown timer
+
+**Email Notifications:**
+* Enable Email Notifications: Toggle email alerts on/off
+* Email Addresses: Comma-separated list of recipients (defaults to admin email)
+* Maintenance Start Email: Customize subject and message for start notifications
+* Maintenance End Email: Customize subject and message for end notifications
+* Placeholders: Use {site_name}, {site_url}, {start_time}, {end_time}, {duration}, {timezone} in messages
+* Uses WordPress native wp_mail() function for reliable email delivery
 
 **Language-Specific Messages:**
 * Default Language Tab: Set default messages that will be used as fallback
@@ -110,6 +120,12 @@ The plugin only clears its own configuration cache, not site-wide cache. This en
 
 The plugin uses WordPress's `template_redirect` hook to check maintenance status on every page load. No cron jobs or external schedulers needed - it works automatically.
 
+**Performance Optimizations:**
+* Zero resource usage when disabled: If "Enable Maintenance Mode" is unchecked, the plugin exits immediately with only 1 database query
+* Zero resource usage when window ended: Once maintenance window ends, a cached transient prevents all date parsing and checks
+* Early exits: All functions check enabled/ended status first before any processing
+* No background checks: The plugin only runs checks when a page is requested, not in the background
+
 = Can I use it without WPML/Polylang? =
 
 Yes! You can manually configure languages. The plugin will work with any number of languages you configure.
@@ -126,6 +142,15 @@ Yes, there's a "Remove All Plugin Data" section at the bottom of the settings pa
 
 No. The plugin only clears its own configuration cache to ensure settings update properly. It does not affect your site's overall cache.
 
+= Does it run background checks when disabled? =
+
+No. When maintenance mode is disabled or the maintenance window has ended, the plugin:
+* Exits immediately with minimal database queries (1 query when disabled, 1 transient check when ended)
+* Does not parse dates or perform timezone calculations
+* Does not send emails or perform any background processing
+* Uses cached transients to prevent redundant checks when window has ended
+* Hooks are registered (WordPress requirement) but exit immediately on first check
+
 = What happens when I delete the plugin? =
 
 When you delete the plugin from WordPress, all plugin data (options, settings, configurations, transients, and uploaded files) will be automatically removed from the database. This ensures a clean uninstall.
@@ -140,6 +165,24 @@ When you delete the plugin from WordPress, all plugin data (options, settings, c
 6. Maintenance Page Frontend
 
 == Changelog ==
+
+= 2.6 =
+* Admin preview: Preview maintenance page anytime (when “Enable Maintenance Mode” is enabled) via `?ssm_preview=1` (admin/editor only)
+* Performance: Faster during active maintenance window using cached active state (reduces DateTime parsing on every request)
+* Performance: Maintenance page renders as a minimal response (skips wp_head/wp_footer) to avoid heavy theme/plugin assets
+* Cleanup: Removed leftover debug output from settings page
+
+= 2.5 =
+* Added Email Notifications feature with customizable subject and message templates
+* New Email Notifications tab in admin settings
+* Email alerts when maintenance mode starts and ends
+* Placeholder support in email templates: {site_name}, {site_url}, {start_time}, {end_time}, {duration}, {timezone}
+* Uses WordPress native wp_mail() function for reliable email delivery
+* Major performance optimizations: Zero resource usage when disabled or window ended
+* Early exit optimizations: All functions check enabled/ended status before processing
+* Cached window status: Transient caching prevents redundant date parsing when window ended
+* Optimized email functions: Check maintenance status before processing
+* Improved code comments explaining performance optimizations
 
 = 2.4 =
 * Simplified UX for single-language sites - auto-configure English, no manual config needed
@@ -182,6 +225,12 @@ When you delete the plugin from WordPress, all plugin data (options, settings, c
 * Timezone handling improvements
 
 == Upgrade Notice ==
+
+= 2.6 =
+Admin preview anytime (when enabled) plus faster maintenance-page performance during active windows.
+
+= 2.5 =
+New email notifications feature! Get alerts when maintenance starts/ends. Major performance improvements - zero resource usage when disabled or window ended. Customizable email templates with placeholders.
 
 = 2.4 =
 Improved UX for single-language sites. Better notification system with timestamps. Professional modal dialogs. Comprehensive data deletion on reset and uninstall.

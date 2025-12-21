@@ -486,7 +486,19 @@ function ssm_settings_page() {
         update_option('ssm_start_time', sanitize_text_field($_POST['ssm_start_time']));
         update_option('ssm_end_time', sanitize_text_field($_POST['ssm_end_time']));
         update_option('ssm_timezone', sanitize_text_field($_POST['ssm_timezone']));
+        
+        // Clear "window ended" transient when settings are saved (new window may be configured)
+        delete_transient('ssm_window_ended');
         update_option('ssm_show_countdown', isset($_POST['ssm_show_countdown']) ? 1 : 0);
+        
+        // Save email notification settings
+        update_option('ssm_email_notifications', isset($_POST['ssm_email_notifications']) ? 1 : 0);
+        update_option('ssm_email_addresses', sanitize_text_field($_POST['ssm_email_addresses'] ?? ''));
+        update_option('ssm_email_notify_end', isset($_POST['ssm_email_notify_end']) ? 1 : 0);
+        update_option('ssm_email_subject_start', sanitize_text_field($_POST['ssm_email_subject_start'] ?? ''));
+        update_option('ssm_email_message_start', wp_kses_post($_POST['ssm_email_message_start'] ?? ''));
+        update_option('ssm_email_subject_end', sanitize_text_field($_POST['ssm_email_subject_end'] ?? ''));
+        update_option('ssm_email_message_end', wp_kses_post($_POST['ssm_email_message_end'] ?? ''));
         
         // Save default/fallback messages
         // Remove slashes if magic quotes are enabled
@@ -550,6 +562,13 @@ function ssm_settings_page() {
     }
     $show_image      = get_option('ssm_show_image', 1);
     $show_countdown  = get_option('ssm_show_countdown', 1);
+    $email_notifications = get_option('ssm_email_notifications', 0);
+    $email_addresses = get_option('ssm_email_addresses', get_option('admin_email', ''));
+    $email_notify_end = get_option('ssm_email_notify_end', 0);
+    $email_subject_start = stripslashes(get_option('ssm_email_subject_start', ''));
+    $email_message_start = stripslashes(get_option('ssm_email_message_start', ''));
+    $email_subject_end = stripslashes(get_option('ssm_email_subject_end', ''));
+    $email_message_end = stripslashes(get_option('ssm_email_message_end', ''));
     
     // If languages were just configured, reload everything fresh FIRST
     if (isset($_GET['languages_configured']) && $_GET['languages_configured'] == '1') {
@@ -807,8 +826,73 @@ function ssm_settings_page() {
                     <a href="#lang-<?php echo esc_attr($lang_code); ?>" class="nav-tab" data-tab="lang-<?php echo esc_attr($lang_code); ?>"><?php echo esc_html($lang_name); ?> (<?php echo esc_html(strtoupper($lang_code)); ?>)</a>
                 <?php endif; ?>
             <?php endforeach; ?>
+            <a href="#email" class="nav-tab" data-tab="email">Email Notifications</a>
             <a href="#debug" class="nav-tab" data-tab="debug">Debug Info</a>
         </nav>
+        
+        <?php
+        // Check if maintenance is currently active
+        $is_active = false;
+        $status_message = '';
+        $status_class = 'notice-info';
+        
+        if ($enabled && $start && $end) {
+            try {
+                $timezone = get_option('ssm_timezone') ?: get_option('timezone_string') ?: 'UTC';
+                $tz = new DateTimeZone($timezone);
+                $current_time = new DateTime('now', $tz);
+                
+                // Try to parse dates
+                $start_dt = DateTime::createFromFormat('Y-m-d\TH:i', $start, $tz);
+                if (!$start_dt) {
+                    $start_dt = DateTime::createFromFormat('Y-m-d H:i', str_replace('T', ' ', $start), $tz);
+                }
+                
+                $end_dt = DateTime::createFromFormat('Y-m-d\TH:i', $end, $tz);
+                if (!$end_dt) {
+                    $end_dt = DateTime::createFromFormat('Y-m-d H:i', str_replace('T', ' ', $end), $tz);
+                }
+                
+                if ($start_dt && $end_dt) {
+                    if ($current_time >= $start_dt && $current_time <= $end_dt) {
+                        $is_active = true;
+                        $status_class = 'notice-error';
+                        $time_remaining = $current_time->diff($end_dt);
+                        $status_message = '<strong>⚠️ MAINTENANCE MODE IS CURRENTLY ACTIVE</strong><br>';
+                        $status_message .= 'Your site is currently showing a 503 maintenance page to all visitors (except admins/editors).<br>';
+                        $status_message .= 'Ends: ' . esc_html($end_dt->format('Y-m-d H:i:s T')) . ' (' . esc_html($time_remaining->format('%h hours %i minutes')) . ' remaining)';
+                    } elseif ($current_time < $start_dt) {
+                        $time_until = $current_time->diff($start_dt);
+                        $status_message = '<strong>Maintenance Mode Scheduled</strong><br>';
+                        $status_message .= 'Will start: ' . esc_html($start_dt->format('Y-m-d H:i:s T')) . ' (in ' . esc_html($time_until->format('%d days %h hours %i minutes')) . ')<br>';
+                        $status_message .= 'Will end: ' . esc_html($end_dt->format('Y-m-d H:i:s T'));
+                    } else {
+                        $status_message = '<strong>Maintenance Window Has Passed</strong><br>';
+                        $status_message .= 'The scheduled maintenance period has ended. Uncheck "Enable Maintenance Mode" to prevent accidental activation.';
+                        $status_class = 'notice-warning';
+                    }
+                }
+            } catch (Exception $e) {
+                // Silent fail - don't show status if dates can't be parsed
+            }
+        } elseif ($enabled) {
+            $status_message = '<strong>⚠️ Maintenance Mode Enabled But Not Configured</strong><br>';
+            $status_message .= 'Please set Start Date/Time and End Date/Time below.';
+            $status_class = 'notice-warning';
+        } else {
+            $status_message = '<strong>Maintenance Mode is Disabled</strong><br>';
+            $status_message .= 'Your site is accessible normally. Enable and configure schedule below to activate maintenance mode.';
+        }
+
+            // (debug output removed)
+
+        ?>
+        
+        <?php if ($status_message): ?>
+        <div class="notice <?php echo esc_attr($status_class); ?> is-dismissible" style="margin: 20px 0; padding: 12px;">
+            <p><?php echo $status_message; ?></p>
+        </div>
+        <?php endif; ?>
         
         <form method="post" enctype="multipart/form-data" id="ssm-main-form">
         <?php wp_nonce_field('ssm_save_action', 'ssm_save_nonce'); ?>
@@ -824,14 +908,14 @@ function ssm_settings_page() {
             <tr>
                 <th><label for="ssm_start_time">Start Date/Time</label></th>
                         <td>
-                            <input type="datetime-local" id="ssm_start_time" name="ssm_start_time" value="<?php echo esc_attr($start); ?>" required>
+                            <input type="datetime-local" id="ssm_start_time" name="ssm_start_time" value="<?php echo !empty($start) ? esc_attr($start) : ''; ?>"<?php echo !empty($start) ? ' required' : ''; ?>>
                             <p class="description">Enter date and time in the timezone selected below.</p>
                         </td>
             </tr>
             <tr>
                 <th><label for="ssm_end_time">End Date/Time</label></th>
                         <td>
-                            <input type="datetime-local" id="ssm_end_time" name="ssm_end_time" value="<?php echo esc_attr($end); ?>" required>
+                            <input type="datetime-local" id="ssm_end_time" name="ssm_end_time" value="<?php echo !empty($end) ? esc_attr($end) : ''; ?>"<?php echo !empty($end) ? ' required' : ''; ?>>
                             <p class="description">Enter date and time in the timezone selected below.</p>
                         </td>
             </tr>
@@ -868,7 +952,7 @@ function ssm_settings_page() {
                                     $countdown_seconds = $start_dt->getTimestamp() - time();
                                     $status_html = '<span style="color:blue; font-weight: bold;">Scheduled (Not Started)</span> - Starts in: <span id="countdown-to-start"></span>';
                                 } elseif ($now > $end_dt) {
-                                    $status_html = '<span style="color:green; font-weight: bold;">Ended</span> - Ended ' . human_time_diff($end_dt->getTimestamp(), $now->getTimestamp()) . ' ago';
+                                    $status_html = '<span style="color:green; font-weight: bold;">Ended</span> - Ended ' . human_time_diff($end_dt->getTimestamp(), time()) . ' ago';
                                 } else {
                                     $countdown_seconds = $end_dt->getTimestamp() - time();
                                     $status_html = '<span style="color:red; font-weight: bold;">ACTIVE NOW</span> - Ends in: <span id="countdown-to-end"></span>';
@@ -943,7 +1027,7 @@ function ssm_settings_page() {
                             <p class="description">Display countdown timer on maintenance page.</p>
                         </td>
                     </tr>
-                    <?php if ($enabled && $start && $end) : ?>
+                    <?php if ($enabled) : ?>
                     <tr>
                         <th>Preview Maintenance Page</th>
                         <td>
@@ -952,12 +1036,17 @@ function ssm_settings_page() {
                             $preview_url = add_query_arg('ssm_preview', '1', $home_url);
                             ?>
                             <a href="<?php echo esc_url($preview_url); ?>" target="_blank" class="button button-secondary">
-                                View Maintenance Page (Opens in new tab)
+                                Preview Maintenance Page (Opens in new tab)
                             </a>
                             <p class="description">
-                                <strong>Note:</strong> As an admin, you bypass the maintenance page by default. Click this link to preview what regular visitors will see.
-                                Regular users (not logged in) will automatically see the maintenance page when it's active.
+                                <strong>Admin preview:</strong> This link will show the maintenance page to you even if the maintenance window is not currently active.
+                                Visitors will still only see it during the scheduled window.
                             </p>
+                            <?php if (empty($start) || empty($end)) : ?>
+                                <p class="description" style="color:#b32d2e;">
+                                    <strong>Note:</strong> Start/End time is not set yet. Preview will show the page, but countdown may be hidden until you set an End time.
+                                </p>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endif; ?>
@@ -1142,6 +1231,86 @@ function ssm_settings_page() {
             <button type="button" id="show-data-removal" class="button" style="color: #dc3232;">Show Reset Options</button>
         </div>
         
+        <!-- Email Notifications Tab -->
+        <div id="tab-email" class="ssm-tab-content" style="display: none;">
+            <h2>Email Notifications</h2>
+            <table class="form-table">
+                <tr>
+                    <th><label for="ssm_email_notifications">Enable Email Notifications</label></th>
+                    <td>
+                        <input type="checkbox" id="ssm_email_notifications" name="ssm_email_notifications" <?php checked($email_notifications); ?>>
+                        <p class="description">Receive email alerts when maintenance mode starts and ends using WordPress native wp_mail() function.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="ssm_email_addresses">Email Addresses</label></th>
+                    <td>
+                        <input type="text" id="ssm_email_addresses" name="ssm_email_addresses" value="<?php echo esc_attr($email_addresses); ?>" class="regular-text" placeholder="admin@example.com, team@example.com">
+                        <p class="description">Comma-separated list of email addresses to notify. Defaults to admin email if empty.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th colspan="2"><h3 style="margin: 20px 0 10px 0;">Maintenance Start Email</h3></th>
+                </tr>
+                <tr>
+                    <th><label for="ssm_email_subject_start">Email Subject</label></th>
+                    <td>
+                        <input type="text" id="ssm_email_subject_start" name="ssm_email_subject_start" value="<?php echo esc_attr($email_subject_start); ?>" class="regular-text" placeholder="[Site Name] Maintenance Mode Activated">
+                        <p class="description">Subject line for maintenance start notification. Leave empty to use default.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="ssm_email_message_start">Email Message</label></th>
+                    <td>
+                        <?php
+                        wp_editor($email_message_start, 'ssm_email_message_start', [
+                            'textarea_name' => 'ssm_email_message_start',
+                            'textarea_rows' => 10,
+                            'media_buttons' => false,
+                            'teeny' => true,
+                            'tinymce' => false,
+                            'quicktags' => true,
+                        ]);
+                        ?>
+                        <p class="description">Message body for maintenance start notification. Leave empty to use default. Available placeholders: {site_name}, {site_url}, {start_time}, {end_time}, {duration}, {timezone}</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="ssm_email_notify_end">Notify When Maintenance Ends</label></th>
+                    <td>
+                        <input type="checkbox" id="ssm_email_notify_end" name="ssm_email_notify_end" <?php checked($email_notify_end); ?>>
+                        <p class="description">Send an email notification when maintenance mode completes.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th colspan="2"><h3 style="margin: 20px 0 10px 0;">Maintenance End Email</h3></th>
+                </tr>
+                <tr>
+                    <th><label for="ssm_email_subject_end">Email Subject</label></th>
+                    <td>
+                        <input type="text" id="ssm_email_subject_end" name="ssm_email_subject_end" value="<?php echo esc_attr($email_subject_end); ?>" class="regular-text" placeholder="[Site Name] Maintenance Mode Completed">
+                        <p class="description">Subject line for maintenance end notification. Leave empty to use default.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="ssm_email_message_end">Email Message</label></th>
+                    <td>
+                        <?php
+                        wp_editor($email_message_end, 'ssm_email_message_end', [
+                            'textarea_name' => 'ssm_email_message_end',
+                            'textarea_rows' => 10,
+                            'media_buttons' => false,
+                            'teeny' => true,
+                            'tinymce' => false,
+                            'quicktags' => true,
+                        ]);
+                        ?>
+                        <p class="description">Message body for maintenance end notification. Leave empty to use default. Available placeholders: {site_name}, {site_url}</p>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        
         <!-- Debug Info Tab -->
         <div id="tab-debug" class="ssm-tab-content" style="display: none;">
             <h2>Maintenance Timing Debug Info</h2>
@@ -1172,7 +1341,7 @@ function ssm_settings_page() {
                                 $debug_countdown_seconds = $start_dt->getTimestamp() - time();
                                 echo '<span style="color:blue;">Scheduled (Not Started)</span> - Starts in: <span id="countdown-to-start-debug"></span>';
                     } elseif ($now > $end_dt) {
-                                echo '<span style="color:green;">Ended</span> - Ended ' . human_time_diff($end_dt->getTimestamp(), $now->getTimestamp()) . ' ago';
+                                echo '<span style="color:green;">Ended</span> - Ended ' . human_time_diff($end_dt->getTimestamp(), time()) . ' ago';
                             } else {
                                 $debug_countdown_seconds = $end_dt->getTimestamp() - time();
                                 echo '<span style="color:red; font-weight: bold;">ACTIVE NOW</span> - Ends in: <span id="countdown-to-end-debug"></span>';
@@ -1271,6 +1440,58 @@ function ssm_settings_page() {
 
 <script>
 jQuery(document).ready(function($) {
+    // Prevent datetime-local inputs from defaulting to today when empty
+    // Dynamically toggle required attribute based on maintenance mode checkbox
+    function toggleDateFieldRequirements() {
+        var maintenanceEnabled = $('#ssm_enabled').is(':checked');
+        if (maintenanceEnabled) {
+            // Only require if maintenance is enabled AND field has a value
+            $('#ssm_start_time, #ssm_end_time').each(function() {
+                if ($(this).val()) {
+                    $(this).attr('required', 'required');
+                } else {
+                    $(this).removeAttr('required');
+                }
+            });
+        } else {
+            // Remove required when maintenance is disabled
+            $('#ssm_start_time, #ssm_end_time').removeAttr('required');
+        }
+    }
+    
+    // Toggle on checkbox change
+    $('#ssm_enabled').on('change', toggleDateFieldRequirements);
+    
+    // Initialize on page load
+    toggleDateFieldRequirements();
+    
+    // Prevent datetime-local inputs from auto-filling today's date when empty
+    $('#ssm_start_time, #ssm_end_time').on('focus', function() {
+        var $field = $(this);
+        var originalValue = $field.data('original-value') || '';
+        if (!originalValue) {
+            $field.data('original-value', $field.val() || '');
+        }
+    }).on('blur', function() {
+        var $field = $(this);
+        // If field was empty before focus and is still empty (or was cleared), keep it empty
+        var originalValue = $field.data('original-value');
+        if (!originalValue && !$field.val()) {
+            $field.val('').attr('value', '');
+        }
+    }).on('change', function() {
+        // If user clears the field, ensure it's truly empty
+        if (!$(this).val()) {
+            $(this).val('').attr('value', '');
+            $(this).removeAttr('required');
+        } else {
+            // If maintenance is enabled, make it required
+            if ($('#ssm_enabled').is(':checked')) {
+                $(this).attr('required', 'required');
+            }
+        }
+    });
+    
     // Tab switching
     $('.nav-tab').on('click', function(e) {
         e.preventDefault();
@@ -1302,6 +1523,22 @@ jQuery(document).ready(function($) {
                 $field.removeAttr('required');
             }
         });
+        
+        // Only require date fields if maintenance mode is enabled
+        var maintenanceEnabled = $('#ssm_enabled').is(':checked');
+        if (!maintenanceEnabled) {
+            $('#ssm_start_time, #ssm_end_time').removeAttr('required');
+        } else {
+            // If enabled, ensure dates are provided
+            var startTime = $('#ssm_start_time').val();
+            var endTime = $('#ssm_end_time').val();
+            if (!startTime || !endTime) {
+                e.preventDefault();
+                alert('Please provide both Start Date/Time and End Date/Time when maintenance mode is enabled.');
+                $('#ssm_start_time, #ssm_end_time').attr('required', 'required');
+                return false;
+            }
+        }
     });
     
     // Remove image button handler (AJAX)
