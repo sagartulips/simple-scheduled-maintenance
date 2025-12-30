@@ -77,6 +77,9 @@ function ssm_plugin_deactivation() {
     // Clear caches on deactivation
     ssm_clear_cache();
     
+    // Force maintenance OFF on deactivation (prevents any chance of a stuck maintenance state)
+    update_option('ssm_enabled', 0);
+    
     // Set flag for deactivation
     update_option('ssm_plugin_deactivated', true);
 }
@@ -940,8 +943,20 @@ function ssm_show_maintenance_page() {
         return;
     }
 }
-// Hook early to catch all requests before theme loads
-// Using priority 1 to run before most other plugins
-// NOTE: Hooks must be registered (WordPress requirement), but they exit immediately
-// when maintenance mode is disabled or window has ended - minimal overhead (1 query/transient check)
-add_action('template_redirect', 'ssm_show_maintenance_page', 1);
+// Attach runtime hook only when maintenance mode is enabled.
+// This avoids running any frontend maintenance check when `ssm_enabled` is false.
+add_action('plugins_loaded', function() {
+    // Only for frontend, not admin/AJAX.
+    if (is_admin() || (defined('DOING_AJAX') && DOING_AJAX)) {
+        return;
+    }
+    
+    // If disabled, don't attach the template_redirect hook at all.
+    if (!get_option('ssm_enabled')) {
+        return;
+    }
+    
+    // Hook early to catch all requests before theme loads
+    // Using priority 1 to run before most other plugins
+    add_action('template_redirect', 'ssm_show_maintenance_page', 1);
+}, 1);

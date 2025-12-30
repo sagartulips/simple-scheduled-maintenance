@@ -121,6 +121,7 @@ The plugin only clears its own configuration cache, not site-wide cache. This en
 The plugin uses WordPress's `template_redirect` hook to check maintenance status on every page load. No cron jobs or external schedulers needed - it works automatically.
 
 **Performance Optimizations:**
+* Conditional hook attach: When "Enable Maintenance Mode" is OFF, the frontend `template_redirect` hook is not attached at all
 * Zero resource usage when disabled: If "Enable Maintenance Mode" is unchecked, the plugin exits immediately with only 1 database query
 * Zero resource usage when window ended: Once maintenance window ends, a cached transient prevents all date parsing and checks
 * Early exits: All functions check enabled/ended status first before any processing

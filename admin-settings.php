@@ -1837,10 +1837,18 @@ jQuery(document).ready(function($) {
             } else {
                 $('#countdown-to-end').text('0 seconds');
             }
-            // Auto-refresh when countdown ends (with 1 second delay)
-            setTimeout(function() {
-                location.reload();
-            }, 1000);
+            // Auto-refresh ONCE when countdown ends (avoid infinite reload loops)
+            try {
+                var reloadKey = 'ssm_countdown_reload_general_' + countdownTarget + '_' + (isCountingToStart ? 'start' : 'end');
+                if (!sessionStorage.getItem(reloadKey)) {
+                    sessionStorage.setItem(reloadKey, '1');
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1000);
+                }
+            } catch (e) {
+                // Fallback: if sessionStorage is unavailable, do not auto-reload to avoid loops
+            }
             return;
         }
         
@@ -1884,10 +1892,18 @@ jQuery(document).ready(function($) {
             } else {
                 $('#countdown-to-end-debug').text('0 seconds');
             }
-            // Auto-refresh when countdown ends (with 1 second delay)
-            setTimeout(function() {
-                location.reload();
-            }, 1000);
+            // Auto-refresh ONCE when countdown ends (avoid infinite reload loops)
+            try {
+                var reloadKey = 'ssm_countdown_reload_debug_' + countdownTargetDebug + '_' + (isCountingToStartDebug ? 'start' : 'end');
+                if (!sessionStorage.getItem(reloadKey)) {
+                    sessionStorage.setItem(reloadKey, '1');
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1000);
+                }
+            } catch (e) {
+                // Fallback: if sessionStorage is unavailable, do not auto-reload to avoid loops
+            }
             return;
         }
         

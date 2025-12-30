@@ -125,7 +125,7 @@ The plugin only clears its own configuration cache, not site-wide cache. This en
 
 ### How does the scheduler work?
 
-The plugin uses WordPress's `template_redirect` hook to check maintenance status on every page load. No cron jobs or external schedulers needed - it works automatically.
+The plugin conditionally attaches WordPress's `template_redirect` hook only when **Enable Maintenance Mode** is enabled, then checks maintenance status on page load. No cron jobs or external schedulers needed - it works automatically.
 
 **Performance Optimizations:**
 - **Zero resource usage when disabled**: If "Enable Maintenance Mode" is unchecked, the plugin exits immediately with only 1 database query
@@ -253,7 +253,7 @@ This plugin is licensed under GPLv2 or later.
 - Email notifications sent (if enabled)
 - Maintenance page displayed to visitors
 
-**Important:** The plugin uses WordPress hooks (`template_redirect` and `init`) which only run when a page is requested. There are NO background processes, cron jobs, or continuous checks. All checks happen on-demand when a visitor requests a page.
+**Important:** The plugin uses WordPress hooks (`plugins_loaded` + `template_redirect`) which only run when a page is requested. There are NO background processes, cron jobs, or continuous checks. All checks happen on-demand when a visitor requests a page.
 
 ### Template System
 The plugin uses a separate `template.php` file for the maintenance page HTML. This provides:
